@@ -16,8 +16,7 @@ class RandomWalk(Simulation):
         # Original heading no longer viable,
         # try new random headings until a viable one is found
         while True:
-            self.heading = random() * 2 * pi
-            yield pos + self.move(self.heading)
+            yield pos + self.move(random() * 2 * pi)
 
 
 if __name__ == "__main__":

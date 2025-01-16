@@ -3,7 +3,7 @@
 # License: MIT
 # ==============================================================================
 from typing import overload, Iterable, TypeVar
-from math import sqrt
+from math import sqrt, atan2
 import builtins
 
 
@@ -84,6 +84,10 @@ class Point(tuple[T, T]):
     @property
     def norm(self):
         return sqrt(sum(v**2 for v in self))
+    
+    @property
+    def angle(self):
+        return atan2(self.y, self.x)
 
     def __str__(self):
         if self._type is int:

@@ -6,7 +6,7 @@ from . import Simulation
 
 
 class Bug1(Simulation):
-    heading: 0.0 # Initial heading in radians
+    heading: 0.0  # Initial heading in radians
 
     def step(self, pos, dst):
         raise NotImplementedError

@@ -6,6 +6,7 @@ from typing import Generator
 from lib.geometry import Point
 from math import cos, sin
 import numpy as np, cv2
+from lib.util import repeat
 from lib.interactive import draw_src, draw_dst
 
 
@@ -13,7 +14,7 @@ class Simulation:
 
     heading: float = 0.0
 
-    max_attempts: int = 100  # Maximum number of attempts per step
+    max_attempts: int = 1000  # Maximum number of attempts per step
     max_travel: float = 1000.0  # Maximum travel distance
     step_length: float = 0.1  # Meters
 
@@ -32,6 +33,7 @@ class Simulation:
         Move the robot along a given heading by a certain length.
         Heading is in radians.
         """
+        self.heading = hdg
         # zero heading pointing up (north)
         r = hdg + 0.5 * np.pi
         if d is None:
@@ -76,6 +78,9 @@ class Simulation:
                         break
                     if n >= sim.max_attempts:
                         raise RuntimeError(f"Trapped at {str(pos)}")
+                else:
+                    # sim.step() exhausted, no path found
+                    raise RuntimeError(f"Exhausted at {str(pos)}")
                 self.pos = p1
                 self.completed = sim.isComplete(pos, sim.dst)
                 return self.pos
@@ -135,5 +140,12 @@ class Simulation:
             draw_dst(img, sim.world.pixel_pos(sim.dst, sim.scale), (0, 192, 0))
             cv2.circle(img, sim.world.pixel_pos(p1, sim.scale), 6, (255, 0, 0), 3)
             cv2.imshow("Map", img)
-            cv2.waitKey(0)
+            try:
+                for key in repeat(cv2.waitKey, 10):
+                    if key == ord(" "):
+                        return Simulation.run(sim)
+                    elif key >= 0:
+                        break
+            except KeyboardInterrupt:
+                pass
             cv2.destroyAllWindows()
