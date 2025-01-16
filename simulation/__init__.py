@@ -132,6 +132,8 @@ class Simulation:
                 if key == 27 or key == ord("q"):  # ESC or 'q'
                     break
             print(p1, sim.heading, sep=", ")
+        print("# src    =", sim.src)
+        print("# dst    =", sim.dst)
         print("# Travel =", round(travel, 2))
         if sim.visualize:
             img = bg.copy()
