@@ -3,5 +3,5 @@
 #### Basic Example
 
 ```sh
-python3 -m simulation.random_walk data/base
+python3 -m simulation.random_walk data/base -v
 ```
