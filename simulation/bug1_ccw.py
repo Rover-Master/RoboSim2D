@@ -62,8 +62,7 @@ class Bug1CCW(Simulation):
                     self.mode = self.Mode.MOVE_TO_DST
                     yield from self.step(pos, dst)
                 else:
-                    with self.noCheck():  # Force move along previous path
-                        yield self.wall_loop.pop(-1) - pos
+                    yield self.wall_loop.pop(-1) - pos
             case _:
                 # Should never reach here
                 raise RuntimeError(f"Invalid mode {self.mode}")

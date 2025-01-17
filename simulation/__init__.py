@@ -22,19 +22,9 @@ class Simulation:
         import lib.env as env
 
         self.world = env.world
-        self.threshold = env.threshold
-        self.visualize = env.visualize
         self.src = env.src_pos
         self.dst = env.dst_pos
         self.__dict__.update(kwargs)
-
-    check_collision = True
-
-    @contextmanager
-    def noCheck(self):
-        self.check_collision = False
-        yield
-        self.check_collision = True
 
     def move(self, hdg: float, d: float | None = None) -> Point[float]:
         """
@@ -78,7 +68,7 @@ class Simulation:
         """
         Check if the simulation has reached a termination condition.
         """
-        return (pos - dst).norm < self.threshold
+        return (pos - dst).norm < self.world.threshold
 
     class Session:
 
@@ -105,7 +95,7 @@ class Simulation:
                         step: Iterable[Point[float]] = [step]
                     for dp in step:
                         p = pos + dp
-                        if (not sim.check_collision) or sim.world.checkLine(pos, p):
+                        if sim.world.checkLine(pos, p):
                             p1 = p
                         else:
                             break
@@ -118,7 +108,9 @@ class Simulation:
                         break
                 else:
                     # sim.step() exhausted, no path found
-                    raise RuntimeError(f"Exhausted at {str(pos)}")
+                    raise RuntimeError(
+                        f"{sim.__class__.__name__}.step() exhausted at {pos}"
+                    )
                 self.sim.heading = (p1 - pos).angle - 0.5 * pi
                 self.pos = p1
                 self.completed = sim.isComplete(pos, sim.dst)
@@ -142,69 +134,65 @@ class Simulation:
         """
         travel: float = 0.0
         p0 = sim.src
-        if sim.visualize:
+        if sim.world.visualize:
             bg = sim.world.view
             fg = np.zeros(bg.shape[:2], dtype=np.uint8)
-            r0 = sim.heading
+            r0 = None
+            p0v = p0
+
+            def visualize():
+                img = bg.copy()
+                img[fg >= 128] = [0, 0, 255]
+                sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
+                sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
+                cv2.circle(
+                    img,
+                    sim.world.pixel_pos(p1),
+                    sim.world.px(0.1),
+                    (255, 0, 0),
+                    sim.world.lw,
+                )
+                sim.world.show(img)
+
         try:
             for p1 in sim:
                 r1 = sim.heading
-                if sim.visualize:
+                if sim.world.visualize and r1 != r0:
+                    r0 = r1
                     cv2.line(
                         fg,
-                        sim.world.pixel_pos(p0),
+                        sim.world.pixel_pos(p0v),
                         sim.world.pixel_pos(p1),
                         255,
-                        1,
+                        sim.world.lw,
                         cv2.LINE_AA,
                     )
-                travel += (p1 - p0).norm
-                p0 = p1
-                if travel > sim.max_travel:
-                    print("# Failed: Max travel distance reached")
-                    break
-                if sim.visualize and r1 != r0:
-                    r0 = r1
-                    img = bg.copy()
-                    img[fg > 0] = [0, 0, 255]
-                    sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
-                    sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
-                    cv2.circle(
-                        img,
-                        sim.world.pixel_pos(p1),
-                        sim.world.px(0.1),
-                        (255, 0, 0),
-                        sim.world.lw,
-                    )
-                    sim.world.show(img)
+                    p0v = p1
+                    visualize()
                     key = cv2.waitKey(1)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
+                travel += (p1 - p0).norm
+                p0 = p1
                 print(p1, sim.heading, sep=", ")
+                if travel > sim.max_travel:
+                    print("# Failed: Max travel distance reached")
+                    break
+        except KeyboardInterrupt:
+            print("# Aborted by user")
         except Exception as e:
             print("# Failed:", e)
-        print("# src    =", sim.src)
-        print("# dst    =", sim.dst)
-        print("# Travel =", round(travel, 2))
-        if sim.visualize:
-            img = bg.copy()
-            img[fg > 0] = [0, 0, 255]
-            sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
-            sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
-            cv2.circle(
-                img,
-                sim.world.pixel_pos(p1),
-                sim.world.px(0.1),
-                (255, 0, 0),
-                sim.world.lw,
-            )
-            sim.world.show(img)
-            try:
-                for key in repeat(cv2.waitKey, 10):
-                    if key == ord(" "):
-                        return Simulation.run(sim)
-                    elif key >= 0:
-                        break
-            except KeyboardInterrupt:
-                pass
-            cv2.destroyAllWindows()
+        else:
+            if sim.world.visualize:
+                visualize()
+                try:
+                    for key in repeat(cv2.waitKey, 10):
+                        if key > 0:
+                            break
+                except KeyboardInterrupt:
+                    pass
+                cv2.destroyAllWindows()
+        finally:
+            print("# src    =", sim.src)
+            print("# dst    =", sim.dst)
+            print("# Travel =", round(travel, 2))
