@@ -90,12 +90,10 @@ class Point(tuple[T, T]):
         return atan2(self.y, self.x)
 
     def __str__(self):
-        if self._type is int:
-            return f"{self.x}, {self.y}"
-        elif self._type is float:
-            return f"{self.x:.4f}, {self.y:.4f}"
+        if self._type is float:
+            return f"[{self.x:.4f},{self.y:.4f}]"
         else:
-            return f"{self.x}, {self.y}"
+            return f"[{self.x},{self.y}]"
 
 
 class Point2i(Point):

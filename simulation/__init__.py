@@ -7,7 +7,6 @@ from lib.geometry import Point
 from math import cos, sin
 import numpy as np, cv2
 from lib.util import repeat
-from lib.interactive import draw_src, draw_dst
 
 
 class Simulation:
@@ -16,17 +15,17 @@ class Simulation:
 
     max_attempts: int = 1000  # Maximum number of attempts per step
     max_travel: float = 1000.0  # Maximum travel distance
-    step_length: float = 0.1  # Meters
+    step_length: float = 0.2  # Meters
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         import lib.env as env
 
         self.world = env.world
-        self.scale = env.scale
         self.threshold = env.threshold
         self.visualize = env.visualize
         self.src = env.src_pos
         self.dst = env.dst_pos
+        self.__dict__.update(kwargs)
 
     def move(self, hdg: float, d: float | None = None) -> Point[float]:
         """
@@ -104,7 +103,7 @@ class Simulation:
         travel: float = 0.0
         p0 = sim.src
         if sim.visualize:
-            bg = sim.world.view(sim.scale)
+            bg = sim.world.view
             fg = np.zeros(bg.shape[:2], dtype=np.uint8)
             r0 = sim.heading
         for p1 in sim:
@@ -112,22 +111,30 @@ class Simulation:
             if sim.visualize:
                 cv2.line(
                     fg,
-                    sim.world.pixel_pos(p0, sim.scale),
-                    sim.world.pixel_pos(p1, sim.scale),
+                    sim.world.pixel_pos(p0),
+                    sim.world.pixel_pos(p1),
                     255,
                     1,
                     cv2.LINE_AA,
                 )
             travel += (p1 - p0).norm
             p0 = p1
+            if travel > sim.max_travel:
+                raise RuntimeError("Exceeded maximum travel distance")
             if sim.visualize and r1 != r0:
                 r0 = r1
                 img = bg.copy()
                 img[fg > 0] = [0, 0, 255]
-                draw_src(img, sim.world.pixel_pos(sim.src, sim.scale), (255, 0, 0))
-                draw_dst(img, sim.world.pixel_pos(sim.dst, sim.scale), (0, 192, 0))
-                cv2.circle(img, sim.world.pixel_pos(p1, sim.scale), 6, (255, 0, 0), 3)
-                cv2.imshow("Map", img)
+                sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
+                sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
+                cv2.circle(
+                    img,
+                    sim.world.pixel_pos(p1),
+                    sim.world.px(0.1),
+                    (255, 0, 0),
+                    sim.world.lw,
+                )
+                sim.world.show(img)
                 key = cv2.waitKey(1)
                 if key == 27 or key == ord("q"):  # ESC or 'q'
                     break
@@ -138,10 +145,16 @@ class Simulation:
         if sim.visualize:
             img = bg.copy()
             img[fg > 0] = [0, 0, 255]
-            draw_src(img, sim.world.pixel_pos(sim.src, sim.scale), (255, 0, 0))
-            draw_dst(img, sim.world.pixel_pos(sim.dst, sim.scale), (0, 192, 0))
-            cv2.circle(img, sim.world.pixel_pos(p1, sim.scale), 6, (255, 0, 0), 3)
-            cv2.imshow("Map", img)
+            sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
+            sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
+            cv2.circle(
+                img,
+                sim.world.pixel_pos(p1),
+                sim.world.px(0.1),
+                (255, 0, 0),
+                sim.world.lw,
+            )
+            sim.world.show(img)
             try:
                 for key in repeat(cv2.waitKey, 10):
                     if key == ord(" "):
