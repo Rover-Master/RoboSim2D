@@ -2,9 +2,10 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
-from typing import Generator
+from typing import Generator, Literal, Iterable
+from contextlib import contextmanager
 from lib.geometry import Point
-from math import cos, sin
+from math import pi, cos, sin, ceil
 import numpy as np, cv2
 from lib.util import repeat
 
@@ -27,21 +28,45 @@ class Simulation:
         self.dst = env.dst_pos
         self.__dict__.update(kwargs)
 
+    check_collision = True
+
+    @contextmanager
+    def noCheck(self):
+        self.check_collision = False
+        yield
+        self.check_collision = True
+
     def move(self, hdg: float, d: float | None = None) -> Point[float]:
         """
         Move the robot along a given heading by a certain length.
         Heading is in radians.
         """
-        self.heading = hdg
         # zero heading pointing up (north)
         r = hdg + 0.5 * np.pi
         if d is None:
             d = self.step_length
         return Point(d * cos(r), d * sin(r), type=float)
 
+    def turn(
+        self,
+        direction: Literal["left", "right"] | int | float,
+        delta=pi / 180.0,
+    ) -> float:
+        r0 = self.heading
+        match direction:
+            case "left":
+                dr = +2 * np.pi
+            case "right":
+                dr = -2 * np.pi
+            case _:
+                dr = float(direction) % (2 * np.pi)
+        n_steps = max(ceil(abs(dr / delta)), 1)
+        print("Turn", direction, dr, n_steps)
+        return map(lambda r: self.move(r0 + r), np.linspace(0, dr, n_steps))
+
     def step(
         self, pos: Point[float], dst: Point[float]
-    ) -> Generator[Point[float], None, None]:
+    ) -> Generator[Point[float] | Iterable[Point[float]], None, None]:
         """
         Step the simulation forward.
         Implementation needs to yield the next position of the robot.
@@ -64,6 +89,7 @@ class Simulation:
         def __init__(self, sim: "Simulation"):
             self.sim = sim
             self.pos = sim.src
+            self.completed = sim.isComplete(self.pos, sim.dst)
 
         def __next__(self):
             if not self.started:
@@ -72,14 +98,28 @@ class Simulation:
             elif not self.completed:
                 sim = self.sim
                 pos = self.pos
-                for n, p1 in enumerate(sim.step(pos, sim.dst)):
-                    if sim.world.checkLine(pos, p1):
+                cnt = 0
+                p1: Point[float] | None = None
+                for step in sim.step(pos, sim.dst):
+                    if isinstance(step, Point):
+                        step: Iterable[Point[float]] = [step]
+                    for dp in step:
+                        p = pos + dp
+                        if (not sim.check_collision) or sim.world.checkLine(pos, p):
+                            p1 = p
+                        else:
+                            break
+                        cnt += 1
+                        if cnt > sim.max_attempts:
+                            raise RuntimeError(
+                                f"Exceeded maximum attempts at {str(pos)}"
+                            )
+                    if p1 is not None:
                         break
-                    if n >= sim.max_attempts:
-                        raise RuntimeError(f"Trapped at {str(pos)}")
                 else:
                     # sim.step() exhausted, no path found
                     raise RuntimeError(f"Exhausted at {str(pos)}")
+                self.sim.heading = (p1 - pos).angle - 0.5 * pi
                 self.pos = p1
                 self.completed = sim.isComplete(pos, sim.dst)
                 return self.pos
@@ -106,39 +146,43 @@ class Simulation:
             bg = sim.world.view
             fg = np.zeros(bg.shape[:2], dtype=np.uint8)
             r0 = sim.heading
-        for p1 in sim:
-            r1 = sim.heading
-            if sim.visualize:
-                cv2.line(
-                    fg,
-                    sim.world.pixel_pos(p0),
-                    sim.world.pixel_pos(p1),
-                    255,
-                    1,
-                    cv2.LINE_AA,
-                )
-            travel += (p1 - p0).norm
-            p0 = p1
-            if travel > sim.max_travel:
-                raise RuntimeError("Exceeded maximum travel distance")
-            if sim.visualize and r1 != r0:
-                r0 = r1
-                img = bg.copy()
-                img[fg > 0] = [0, 0, 255]
-                sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
-                sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
-                cv2.circle(
-                    img,
-                    sim.world.pixel_pos(p1),
-                    sim.world.px(0.1),
-                    (255, 0, 0),
-                    sim.world.lw,
-                )
-                sim.world.show(img)
-                key = cv2.waitKey(1)
-                if key == 27 or key == ord("q"):  # ESC or 'q'
+        try:
+            for p1 in sim:
+                r1 = sim.heading
+                if sim.visualize:
+                    cv2.line(
+                        fg,
+                        sim.world.pixel_pos(p0),
+                        sim.world.pixel_pos(p1),
+                        255,
+                        1,
+                        cv2.LINE_AA,
+                    )
+                travel += (p1 - p0).norm
+                p0 = p1
+                if travel > sim.max_travel:
+                    print("# Failed: Max travel distance reached")
                     break
-            print(p1, sim.heading, sep=", ")
+                if sim.visualize and r1 != r0:
+                    r0 = r1
+                    img = bg.copy()
+                    img[fg > 0] = [0, 0, 255]
+                    sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
+                    sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
+                    cv2.circle(
+                        img,
+                        sim.world.pixel_pos(p1),
+                        sim.world.px(0.1),
+                        (255, 0, 0),
+                        sim.world.lw,
+                    )
+                    sim.world.show(img)
+                    key = cv2.waitKey(1)
+                    if key == 27 or key == ord("q"):  # ESC or 'q'
+                        break
+                print(p1, sim.heading, sep=", ")
+        except Exception as e:
+            print("# Failed:", e)
         print("# src    =", sim.src)
         print("# dst    =", sim.dst)
         print("# Travel =", round(travel, 2))
