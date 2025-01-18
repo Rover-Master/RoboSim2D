@@ -5,9 +5,11 @@
 from typing import Iterable
 from math import pi, fmod
 
+
 def repeat(action: callable, *args, **kwargs):
     while True:
         yield action(*args, **kwargs)
+
 
 def readline(stream: Iterable[bytes]) -> str:
     line: bytes = b""
@@ -21,14 +23,27 @@ def readline(stream: Iterable[bytes]) -> str:
 def periodic(v, p: float = 2 * pi):
     res = fmod(v, p)
     p2 = p / 2
-    if (res > +p2):
+    if res > +p2:
         return res - p
-    if (res < -p2):
+    if res < -p2:
         return res + p
     return res
+
 
 def angDiff(r1, r2):
     """
     Angle from r1 to r2, in radians
     """
     return periodic(r2 - r1)
+
+
+def sliceOffsets(x: int, y: int):
+    s0 = (
+        slice(None, -y) if y > 0 else slice(-y, None),
+        slice(None, -x) if x > 0 else slice(-x, None),
+    )
+    s1 = (
+        slice(None, +y) if y < 0 else slice(+y, None),
+        slice(None, +x) if x < 0 else slice(+x, None),
+    )
+    return s0, s1

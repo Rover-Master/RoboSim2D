@@ -9,19 +9,29 @@ from .geometry import Point
 
 
 def parse_point(s: str) -> Point[float]:
-    return Point(*map(float, s.split(",")))
+    return Point(*s.split(","), type=float)
 
 
 parser = ArgumentParser()
 
 parser.add_argument("map", type=str, help="Path to the map file", nargs=1)
-parser.add_argument(
-    "-s", "--scale", type=float, help="DPI Scale for UI display", default=2.0
-)
+# Simulation parameters
 parser.add_argument("--src", type=parse_point, help="Source", default=None)
 parser.add_argument("--dst", type=parse_point, help="Destination", default=None)
+# Simulation conditions
 parser.add_argument(
     "-t", "--threshold", type=float, help="Threshold Distance", default=0.5
+)
+parser.add_argument(
+    "-r",
+    "--radius",
+    help="Collision radius for the robot, in meters",
+    type=float,
+    default=None,
+)
+# Visualization parameters
+parser.add_argument(
+    "-s", "--scale", type=float, help="DPI Scale for UI display", default=2.0
 )
 parser.add_argument(
     "-v",
@@ -38,30 +48,31 @@ parser.add_argument(
     default=0.05,
 )
 parser.add_argument(
-    "-r",
+    "-R",
     "--resolution",
-    help="Pixel resolution in meters",
+    help="World pixel resolution in meters",
     type=float,
     default=0.025,
 )
-
-args = parser.parse_args()
-scale = float(args.scale)
-threshold = float(args.threshold)
-visualize = bool(args.visualize)
-line_width = float(args.line_width)
-resolution = float(args.resolution)
-world = World(
-    str(args.map[0]), resolution=resolution, dpi_scale=scale, line_width=line_width
+parser.add_argument(
+    "--debug",
+    help="Toggle debug tools",
+    default=False,
+    action="store_true",
 )
 
-import cv2, numpy as np
+args = parser.parse_args()
+params = dict(
+    radius=args.radius,
+    threshold=float(args.threshold),
+    dpi_scale=float(args.scale),
+    visualize=bool(args.visualize),
+    line_width=float(args.line_width),
+    resolution=float(args.resolution),
+    debug=bool(args.debug),
+)
 
-
-def show(title: str, img: np.ndarray):
-    s = 1 / scale
-    cv2.imshow(title, cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR))
-
+world = World(str(args.map[0]), **params)
 
 src_pos: Point[float] = args.src
 dst_pos: Point[float] = args.dst

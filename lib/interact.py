@@ -24,9 +24,9 @@ def prompt(world: World, src_pos: Point | None, dst_pos: Point | None):
             else:
                 world.draw_dst(img, cursor, (192, 192, 192))
         if src_pixel:
-            world.draw_src(img, src_pixel, (255, 0, 0))
+            world.draw_src(img, src_pixel)
         if dst_pixel:
-            world.draw_dst(img, dst_pixel, (0, 192, 0))
+            world.draw_dst(img, dst_pixel)
         # Gray preview line
         if cursor and src_pixel:
             world.line(img, src_pixel, cursor, (128, 128, 128))
@@ -34,7 +34,7 @@ def prompt(world: World, src_pos: Point | None, dst_pos: Point | None):
         if src_pixel and dst_pixel:
             color = (0, 192, 0) if direct_navigable else (0, 0, 255)
             world.line(img, src_pixel, dst_pixel, color)
-        return world.show(img)
+        world.show(img)
 
     def onMouse(event, x, y, flags, _: None):
         nonlocal src_pixel, src_pos, dst_pixel, dst_pos, cursor, direct_navigable
@@ -52,8 +52,8 @@ def prompt(world: World, src_pos: Point | None, dst_pos: Point | None):
                 direct_navigable = world.checkLine(src_pos, dst_pos)
         render()
 
-    handle = render()
-    cv2.setMouseCallback(handle, onMouse)
+    render()
+    cv2.setMouseCallback(world.handle, onMouse)
 
     for keycode in repeat(cv2.waitKey, 10):
         match keycode:
@@ -71,5 +71,5 @@ def prompt(world: World, src_pos: Point | None, dst_pos: Point | None):
                     sys.exit(0)
                 elif keycode >= 0:
                     print(f"Unknown keycode: {keycode}")
-    cv2.setMouseCallback(handle, lambda *args: None)
+    cv2.setMouseCallback(world.handle, lambda *args: None)
     return src_pos, dst_pos
