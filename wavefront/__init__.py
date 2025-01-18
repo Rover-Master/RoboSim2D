@@ -1,6 +1,10 @@
+# ==============================================================================
+# Author: Yuxuan Zhang (robotics@z-yx.cc)
+# License: MIT
+# ==============================================================================
+import numpy as np, cv2
 from lib.geometry import Point
 from math import ceil
-import sys, numpy as np, cv2
 from lib.util import sliceOffsets
 
 
@@ -11,7 +15,7 @@ class WaveFront:
     # Time step in seconds
     time_step: float = 0.01
     # Termination threshold - the remaining probability
-    vanish_threshold: float = 0.001
+    vanish_threshold: float = 0.0001
 
     def __init__(self, **kwargs):
         from lib.env import world, src_pos, dst_pos
@@ -49,26 +53,26 @@ class WaveFront:
         mask = cv2.resize(mask, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
         self.mask = mask < 128
         # Discrete cartesian coordinates (per-cell)
-        Y, X = np.mgrid[:h, :w] * world.res
+        Y, X = np.mgrid[:h, :w].astype(self.dtype) * world.res
         ox, oy = world.world_pos(Point(0, 0))
         self.X = +X + ox
         self.Y = -Y + oy
         # source_field:
         #   A gaussian distribution around the source.
         #   It's sigma equals the radius of the robot.
-        self.source_field = self.norm(self.gaussian(src_pos, world.radius))
+        self.source_field = self.norm(self.gaussian(src_pos, world.radius / 2))
         # drain_field:
         #   An inverse gaussian distribution around the destination
         #   It's sigma equals the threshold distance.
-        self.drain_field = 1.0 - self.gaussian(dst_pos, world.threshold)
+        self.drain_field = self.gaussian(dst_pos, world.threshold / 2)
 
     def norm(self, field: np.ndarray) -> np.ndarray:
-        f = np.maximum(field * self.base, 0.0)
-        return f / f.sum()
+        f = np.maximum(field * self.base, 0.0).astype(self.dtype)
+        return (f / f.sum()).astype(self.dtype)
 
     def gaussian(self, origin: Point[float], sigma) -> np.ndarray:
         X, Y = self.X - origin.x, self.Y - origin.y
-        return np.exp(-(X**2 + Y**2) / (2 * sigma**2))
+        return np.exp(-(X**2 + Y**2) / (2 * sigma**2)).astype(self.dtype)
 
     def render(
         self,
@@ -109,7 +113,8 @@ class WaveFront:
         fg = np.ones_like(field) * c1
         return bg * f0 + fg * f1
 
-    def tick(self, u0: np.ndarray, p0: float) -> np.ndarray:
+    # GPU Acceleration
+    def tick(self, u0: np.ndarray, p0: float, du: np.ndarray) -> np.ndarray:
         """
         input: u0 - the prob. field at time t_{n-1}
         output: u1 - the prob. field at time t_{n}
@@ -119,29 +124,39 @@ class WaveFront:
     class Session:
 
         started: bool = False
+        finished: bool = False
 
         def __init__(self, wf: "WaveFront"):
             self.wf = wf
             self.u0: np.ndarray = wf.source_field.copy()
             self.p0: float = self.u0.sum()
+            self.du = np.zeros_like(self.u0)
 
         def __next__(self):
+            if self.finished:
+                raise StopIteration
             if self.started:
                 # Apply next tick
-                u1 = self.wf.tick(self.u0, self.p0)
-                # Drain from dst field
-                u1 *= self.wf.drain_field
-                # Calculate remaining probability
-                p1 = u1.sum()
+                u1 = self.wf.tick(self.u0, self.p0, self.du)
+                # Normalize probability field
+                # (1) Obstacles are not traversable, constrain to 0
+                u1 = np.clip(u1 * self.wf.base, 0.0, 1.0)
+                # (2) Overall probability must equal previous iteration
+                u1 *= self.p0 / u1.sum()
+                # Compute delta
+                du = u1 - self.u0
+                # Apply drain
+                drain: np.ndarray = u1 * self.wf.drain_field
+                dp = float(drain.sum())
+                p1 = self.p0 - dp
+                u1 -= drain
                 # Termination conditions
-                if p1 < self.wf.vanish_threshold:
+                if p1 < 0:
                     raise StopIteration
-                dp = self.p0 - p1
-                if dp < 0.0:
-                    dp = 0.0
-                    u1 *= self.p0 / p1
+                if p1 < self.wf.vanish_threshold:
+                    self.finished = True
                 # Prepare for next rick
-                self.u0, self.p0 = u1, p1
+                self.u0, self.p0, self.du = u1, p1, du
             else:
                 self.started = True
                 dp = 0.0
@@ -164,9 +179,11 @@ class WaveFront:
             fig, ax = plt.subplots()
             (plot,) = ax.plot([], [], "r-", lw=2)
             last_vis_t = 0.0
+            dp_max = 0.0
 
             def visualize(u, p, dp):
-                nonlocal plot
+                nonlocal plot, dp_max
+                dp_max = max(dp_max, dp)
                 bg = wf.view.astype(wf.dtype) / 255.0
                 m = wf.render(bg, u, color=[0.0, 0.0, 1.0])
                 m = (m * 255.0).astype(np.uint8)
@@ -183,7 +200,8 @@ class WaveFront:
                 )
                 wf.world.show(m)
                 # T-P Plot
-                ax.set_xlim(0, max(t, 5.0))
+                ax.set_xlim(0, max(t, 1.0))
+                ax.set_ylim(0, max(dp_max, 1e-10))
                 plot.remove()
                 (plot,) = ax.plot(T, P, "r-", lw=2)
                 fig.show()
@@ -199,6 +217,17 @@ class WaveFront:
                 visualize(u, p, dp)
                 if cv2.waitKey(1) > 0:
                     break
+
+        x = np.array(T)
+        y = np.array(P)
+        print(f"# Coverage = {y.sum():.4f}")
+        y /= y.sum()
+        mean = np.sum(x * y)
+        print(f"# Travel   = {mean:.4f}")
+        variance = np.sum((x - mean) ** 2 * y)
+        std = np.sqrt(variance)
+        print(f"# Std      = {std:.4f}")
+
         if wf.world.visualize:
             if t != last_vis_t:
                 visualize(u, p, dp)

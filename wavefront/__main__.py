@@ -1,3 +1,7 @@
+# ==============================================================================
+# Author: Yuxuan Zhang (robotics@z-yx.cc)
+# License: MIT
+# ==============================================================================
 import cv2, numpy as np
 from lib.env import world
 from . import WaveFront
@@ -13,8 +17,8 @@ def render(v: int | None = None):
         world.radius = v / 50.0
     wf = WaveFront()
     view = wf.view.astype(wf.dtype) / 255.0
-    view = wf.render(view, wf.source_field, [1.0, 0.0, 0.0], invert=False)
-    view = wf.render(view, wf.drain_field, [0.0, 0.8, 0.0], invert=True)
+    view = wf.render(view, wf.source_field, [1.0, 0.0, 0.0])
+    view = wf.render(view, wf.drain_field, [0.0, 0.8, 0.0])
     view = (view * 255).astype(np.uint8)
     world.draw_src(view, world.pixel_pos(wf.src), (0, 0, 255))
     world.draw_dst(view, world.pixel_pos(wf.dst), (0, 0, 255))
