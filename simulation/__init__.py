@@ -3,7 +3,6 @@
 # License: MIT
 # ==============================================================================
 from typing import Generator, Literal, Iterable
-from contextlib import contextmanager
 from lib.geometry import Point
 from math import pi, cos, sin, ceil
 import numpy as np, cv2
@@ -143,8 +142,8 @@ class Simulation:
             def visualize():
                 img = bg.copy()
                 img[fg >= 128] = [0, 0, 255]
-                sim.world.draw_src(img, sim.world.pixel_pos(sim.src), (255, 0, 0))
-                sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst), (0, 192, 0))
+                sim.world.draw_src(img, sim.world.pixel_pos(sim.src))
+                sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst))
                 cv2.circle(
                     img,
                     sim.world.pixel_pos(p1),

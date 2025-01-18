@@ -24,9 +24,9 @@ def prompt(world: World, src_pos: Point | None, dst_pos: Point | None):
             else:
                 world.draw_dst(img, cursor, (192, 192, 192))
         if src_pixel:
-            world.draw_src(img, src_pixel, (255, 0, 0))
+            world.draw_src(img, src_pixel)
         if dst_pixel:
-            world.draw_dst(img, dst_pixel, (0, 192, 0))
+            world.draw_dst(img, dst_pixel)
         # Gray preview line
         if cursor and src_pixel:
             world.line(img, src_pixel, cursor, (128, 128, 128))

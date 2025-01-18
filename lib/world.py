@@ -2,13 +2,25 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
-import os, cv2, numpy as np
+import cv2, numpy as np
 from yaml import safe_load
 from pathlib import Path
 from math import ceil
 
 from .util import repeat, readline
 from .geometry import Point
+
+
+def loadPGM(path: Path):
+    with path.open("rb") as pgm:
+        stream = repeat(pgm.read, 1)
+        assert readline(stream) == "P5\n"
+        (w, h) = [int(i) for i in readline(stream).split()]
+        depth = int(readline(stream))
+        assert depth <= 255, f"Unsupported PGM depth ({depth})"
+        count = w * h
+        buffer = pgm.read(count)
+        return np.frombuffer(buffer, np.uint8, count).reshape((h, w))
 
 
 class World:
@@ -26,6 +38,7 @@ class World:
         debug: bool = False,
     ):
         path = Path(map_name)
+        png = path.with_suffix(".png")
         pgm = path.with_suffix(".pgm")
         yaml = path.with_suffix(".yaml")
         self.name = pgm.name
@@ -47,26 +60,21 @@ class World:
                 self.radius = float(meta.get("radius", 0.25))
             threshold = ceil(255 * (1.0 - meta.get("free_thresh", 0.25)))
             negate = bool(meta.get("negate", False))
-        with pgm.open("rb") as pgm:
-            stream = repeat(pgm.read, 1)
-            assert readline(stream) == "P5\n"
-            (w, h) = [int(i) for i in readline(stream).split()]
-            depth = int(readline(stream))
-            assert depth <= 255, f"Unsupported PGM depth ({depth})"
-            count = w * h
-            buffer = pgm.read(count)
-            img = np.frombuffer(buffer, np.uint8, count).reshape((h, w))
-            img = cv2.resize(
-                img, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
-            )
-            self.img = img
-            if not negate:
-                self.occupancy: np.ndarray[tuple[int, int], bool] = img < threshold
-            else:
-                self.occupancy: np.ndarray[tuple[int, int], bool] = img > threshold
-            # Width and height of the world, in meters
-            h, w = self.occupancy.shape
-            self.h, self.w = h * self.res, w * self.res
+        if png.is_file():
+            img = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+        elif pgm.is_file():
+            img = loadPGM(pgm)
+        else:
+            raise FileNotFoundError(f"{png} or {pgm} not found")
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+        self.img = img
+        if not negate:
+            self.occupancy: np.ndarray[tuple[int, int], bool] = img < threshold
+        else:
+            self.occupancy: np.ndarray[tuple[int, int], bool] = img > threshold
+        # Width and height of the world, in meters
+        h, w = self.occupancy.shape
+        self.h, self.w = h * self.res, w * self.res
         # Rendering
         dx = int(0.2 / resolution * dpi_scale)
         self.text_offset = Point(dx * 2, dx, type=int)
@@ -86,7 +94,7 @@ class World:
     ):
         cv2.line(img, src, dst, color, self.lw, cv2.LINE_AA)
 
-    def draw_src(self, img: np.ndarray, pos: Point[int], color: tuple[int, int, int]):
+    def draw_src(self, img: np.ndarray, pos: Point[int], color=(255, 0, 0)):
         cv2.circle(img, pos, self.px(0.2), color, self.lw)
         cv2.putText(
             img,
@@ -98,7 +106,7 @@ class World:
             self.lw,
         )
 
-    def draw_dst(self, img: np.ndarray, pos: Point[int], color: tuple[int, int, int]):
+    def draw_dst(self, img: np.ndarray, pos: Point[int], color=(0, 192, 0)):
         cv2.drawMarker(img, pos, color, cv2.MARKER_SQUARE, self.px(0.4), self.lw)
         cv2.putText(
             img,

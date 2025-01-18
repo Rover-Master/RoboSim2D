@@ -9,7 +9,7 @@ from .geometry import Point
 
 
 def parse_point(s: str) -> Point[float]:
-    return Point(*map(float, s.split(",")))
+    return Point(*s.split(","), type=float)
 
 
 parser = ArgumentParser()
@@ -63,7 +63,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 params = dict(
-    radius=float(args.radius),
+    radius=args.radius,
     threshold=float(args.threshold),
     dpi_scale=float(args.scale),
     visualize=bool(args.visualize),
