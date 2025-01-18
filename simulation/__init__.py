@@ -183,6 +183,15 @@ class Simulation:
             print("# Failed:", e)
         else:
             if sim.world.visualize:
+                if p0v != p1:
+                    cv2.line(
+                        fg,
+                        sim.world.pixel_pos(p0v),
+                        sim.world.pixel_pos(p1),
+                        255,
+                        sim.world.lw,
+                        cv2.LINE_AA,
+                    )
                 visualize()
                 try:
                     for key in repeat(cv2.waitKey, 10):
