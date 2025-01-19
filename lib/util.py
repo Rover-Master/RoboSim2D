@@ -11,6 +11,13 @@ def repeat(action: callable, *args, **kwargs):
         yield action(*args, **kwargs)
 
 
+def limited(it: Iterable, count: int):
+    for i, item in enumerate(it):
+        if i >= count:
+            break
+        yield item
+
+
 def readline(stream: Iterable[bytes]) -> str:
     line: bytes = b""
     for byte in stream:
@@ -65,3 +72,23 @@ def sliceOffsets(x: int, y: int):
         slice(None, +x) if x < 0 else slice(+x, None),
     )
     return s0, s1
+
+
+from typing import TypeVar, Callable
+
+T = TypeVar("T")
+
+
+class Retry(Exception):
+
+    def __call__(_, func: Callable[..., T]) -> Callable[..., T]:
+        from functools import wraps
+
+        def wrapper(*args, **kwargs):
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except Retry:
+                    pass
+
+        return wraps(func)(wrapper)

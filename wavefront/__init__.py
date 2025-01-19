@@ -2,7 +2,7 @@
 # Author: Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
-import numpy as np, cv2
+import builtins, numpy as np, cv2
 from lib.geometry import Point
 from math import ceil
 from lib.util import dup, sliceOffsets
@@ -185,6 +185,8 @@ class WaveFront:
         if out_list is not None:
             trj_list_file = open(out_list, "w")
             print = dup(trj_list_file)
+        else:
+            print = builtins.print
 
         U = np.zeros_like(wf.base)
         P = list[float]()
@@ -263,7 +265,7 @@ class WaveFront:
                 amp = _amp
             return wf.world.show(vis(), "probability distribution")
 
-        if wf.world.visualize:
+        if wf.world.visualize and not wf.world.no_wait:
             if t != last_vis_t:
                 visualize(u, p, dp)
                 handle = renderVis()

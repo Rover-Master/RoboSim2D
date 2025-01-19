@@ -44,6 +44,12 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
+    "--no-wait",
+    help="Do not wait for key stroke after simulation is complete",
+    default=False,
+    action="store_true",
+)
+parser.add_argument(
     "-w",
     "--line-width",
     help="Line Width for Visualization, in Meters",
@@ -71,6 +77,7 @@ params = dict(
     threshold=float(args.threshold),
     dpi_scale=float(args.scale),
     visualize=bool(args.visualize),
+    no_wait=bool(args.no_wait),
     line_width=float(args.line_width),
     resolution=float(args.resolution),
     debug=bool(args.debug),

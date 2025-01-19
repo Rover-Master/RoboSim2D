@@ -2,13 +2,13 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
-import sys, numpy as np, cv2
-from typing import Generator, Literal, Iterable
+import builtins, sys, numpy as np, cv2
+from typing import Generator, Literal, Iterable, Union
 from math import pi, cos, sin, ceil
 from itertools import chain
 from lib.geometry import Point
 from lib.world import World
-from lib.util import repeat, dup
+from lib.util import repeat, dup, Retry
 
 
 class Proposal:
@@ -51,6 +51,11 @@ class Proposal:
             return Eager([v])
         else:
             return Eager(v)
+
+
+ProposalType = (
+    Point[float] | Iterable[Point[float]] | Proposal | Iterable[Proposal] | None
+)
 
 
 class Eager(Proposal):
@@ -124,7 +129,7 @@ class Simulation:
 
     def step(
         self, pos: Point[float], dst: Point[float]
-    ) -> Generator[Point[float] | Iterable[Point[float]] | Proposal, any, any]:
+    ) -> Generator[ProposalType, any, any]:
         """
         Step the simulation forward.
         Implementation needs to yield the next position of the robot.
@@ -138,6 +143,10 @@ class Simulation:
         """
         return (pos - dst).norm < self.world.threshold
 
+    class Abort(Exception):
+        def __init__(self, reason: str):
+            self.reason = reason
+
     class Session:
 
         started: bool = False
@@ -149,6 +158,7 @@ class Simulation:
             self.pos = sim.src
             self.completed = sim.isComplete(self.pos, sim.dst)
 
+        @Retry()
         def __next__(self):
             if not self.started:
                 self.started = True
@@ -158,6 +168,8 @@ class Simulation:
                 pos = self.pos
                 p1: Point[float] | None = None
                 for cnt, step in enumerate(sim.step(pos, sim.dst)):
+                    if step is None:
+                        raise Retry
                     proposal = Proposal.construct(step)
                     p1 = proposal(self.pos, world=sim.world)
                     if p1 is not None:
@@ -187,27 +199,29 @@ class Simulation:
 
     def visualize(
         self,
-        pos: Point[float],
+        pos: Point[float] | None,
         fg: np.ndarray,
         bg: np.ndarray | None = None,
         travel: float | None = None,
     ):
+        name = self.__class__.__name__
         world = self.world
         if bg is None:
             bg = world.view
         bg[fg >= 128] = [0, 0, 255]
         world.draw_src(bg, world.pixel_pos(self.src))
         world.draw_dst(bg, world.pixel_pos(self.dst))
-        cv2.circle(
-            bg,
-            world.pixel_pos(pos),
-            world.px(0.1),
-            (255, 0, 0),
-            world.line_width,
-        )
+        if pos is not None:
+            cv2.circle(
+                bg,
+                world.pixel_pos(pos),
+                world.px(0.16),
+                (192, 0, 0),
+                cv2.FILLED,
+            )
         if travel is not None:
             world.caption(
-                bg, f"Travel: {travel:.2f} m", fg=(0, 0, 0), bg=(255, 255, 255)
+                bg, f"Travel: {travel:.2f} m ({name})", fg=(0, 0, 0), bg=(255, 255, 255)
             )
         return bg
 
@@ -217,35 +231,60 @@ class Simulation:
         Run the simulation
         """
         name = sim.__class__.__name__
+        sim_img = sim.world.withPrefix(name, suffix="png")
         trj_list = sim.world.withPrefix(name, suffix="txt")
-        trj_img = sim.world.withPrefix(name, suffix="png")
+        trj_img = sim.world.withPrefix(f"{name}-trj", suffix="png")
+        overlay_img = sim.world.withPrefix(f"{name}-overlay", suffix="png")
         if trj_list is not None:
             trj_list_file = open(trj_list, "w")
             print = dup(trj_list_file)
+        else:
+            print = builtins.print
 
         travel: float = 0.0
         p0 = sim.src
+
+        trj = np.zeros(sim.world.view.shape[:2], dtype=np.uint8)
+
+        def line(a: Point[float], b: Point[float]):
+            cv2.line(
+                trj,
+                sim.world.pixel_pos(a),
+                sim.world.pixel_pos(b),
+                255,
+                sim.world.line_width,
+                cv2.LINE_AA,
+            )
+
+        def failure():
+            print("# travel  = N/A")
+            cv2.drawMarker(
+                trj,
+                sim.world.pixel_pos(p1),
+                0,
+                cv2.MARKER_TILTED_CROSS,
+                sim.world.px(0.3),
+                sim.world.line_width * 3,
+            )
+            cv2.drawMarker(
+                trj,
+                sim.world.pixel_pos(p1),
+                255,
+                cv2.MARKER_TILTED_CROSS,
+                sim.world.px(0.3),
+                sim.world.line_width,
+            )
+
         if sim.world.visualize:
             bg = sim.world.view
-            fg = np.zeros(bg.shape[:2], dtype=np.uint8)
-            sim.world.show(sim.visualize(p0, fg, travel=0.0))
-
-            def line(a: Point[float], b: Point[float]):
-                cv2.line(
-                    fg,
-                    sim.world.pixel_pos(a),
-                    sim.world.pixel_pos(b),
-                    255,
-                    sim.world.line_width,
-                    cv2.LINE_AA,
-                )
+            sim.world.show(sim.visualize(p0, trj, travel=0.0))
 
         try:
             for p1 in sim:
                 travel += (p1 - p0).norm
+                line(p0, p1)
                 if sim.world.visualize:
-                    line(p0, p1)
-                    sim.world.show(sim.visualize(p1, fg, travel=travel))
+                    sim.world.show(sim.visualize(p1, trj, travel=travel))
                     key = cv2.waitKey(1)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
@@ -255,26 +294,82 @@ class Simulation:
                     print("# Failed: Max travel distance reached")
                     break
             print(*p1, sim.heading, sep=", ")
-        except KeyboardInterrupt:
-            print("# Aborted by user")
-        except Exception as e:
-            import traceback
-
-            print("# Failed:", e)
-            traceback.print_exception(e, file=sys.stderr)
-        finally:
             print("# src    =", sim.src)
             print("# dst    =", sim.dst)
             print("# travel =", round(travel, 2))
-            if trj_list is not None:
-                trj_list_file.close()
-            if trj_img is not None:
-                cv2.imwrite(str(trj_img), fg)
-            if sim.world.visualize:
-                try:
-                    for key in repeat(cv2.waitKey, 10):
-                        if key > 0:
-                            break
-                except KeyboardInterrupt:
-                    pass
-                cv2.destroyAllWindows()
+        except KeyboardInterrupt:
+            failure()
+            print("# abort = user aborted")
+        except Simulation.Abort as e:
+            failure()
+            print("# abort =", e.reason)
+        except Exception as e:
+            import traceback
+
+            failure()
+            print("# abort = ", e)
+            traceback.print_exception(e, file=sys.stderr)
+
+        if trj_list is not None:
+            trj_list_file.close()
+        if trj_img is not None:
+            cv2.imwrite(str(trj_img), trj)
+        if sim_img is not None:
+            cv2.imwrite(str(sim_img), sim.visualize(None, trj, travel=travel))
+        if overlay_img is not None:
+            blank = np.zeros_like(trj)
+            overlay = sim.visualize(
+                None, blank, np.stack([blank] * 3, axis=-1), travel=travel
+            )
+            alpha = (np.max(overlay, axis=-1, keepdims=True) > 0).astype(np.uint8) * 255
+            img = np.concatenate([overlay, alpha], axis=-1)
+            print(img.shape, img.dtype, file=sys.stderr)
+            cv2.imwrite(str(overlay_img), img)
+        if sim.world.visualize and not sim.world.no_wait:
+            try:
+                for key in repeat(cv2.waitKey, 10):
+                    if key > 0:
+                        break
+            except KeyboardInterrupt:
+                pass
+            cv2.destroyAllWindows()
+
+
+class WallFollowing:
+    wall_following_direction: Literal["CW", "CCW"] | None = None
+
+    def __init__(self):
+        if not isinstance(self, Simulation):
+            raise TypeError(f"{self} does not implement Simulation")
+
+    @property
+    def hit_wall(self: Union[Simulation, "WallFollowing"]) -> ProposalType:
+        match self.wall_following_direction:
+            case "CW":
+                return Eager(self.turn("left"))
+            case "CCW":
+                return Eager(self.turn("right"))
+        raise RuntimeError(
+            f"Bad wall following direction {self.wall_following_direction}"
+        )
+
+    @property
+    def move_along_wall(self: Union[Simulation, "WallFollowing"]) -> ProposalType:
+        match self.wall_following_direction:
+            case "CW":
+                return (
+                    # First try to turn clockwise
+                    Lazy(self.turn("right")),
+                    # Right turn not viable, try left turn
+                    Eager(self.turn("left")),
+                )
+            case "CCW":
+                return (
+                    # First try to turn counter-clockwise
+                    Lazy(self.turn("left")),
+                    # Left turn not viable, try right turn
+                    Eager(self.turn("right")),
+                )
+        raise RuntimeError(
+            f"Bad wall following direction {self.wall_following_direction}"
+        )

@@ -37,6 +37,7 @@ class World:
         radius: float = None,
         prefix: str | None,
         visualize: bool = False,
+        no_wait: bool = False,
         debug: bool = False,
     ):
         path = Path(map_name)
@@ -49,6 +50,7 @@ class World:
         self.line_width_meters = line_width
         self.threshold = threshold
         self.visualize = visualize
+        self.no_wait = no_wait
         self.radius = radius
         self.debug = debug
         if prefix is None:
@@ -65,8 +67,6 @@ class World:
                 self.path_prefix.mkdir(parents=True, exist_ok=True)
             elif self.path_prefix.is_file():
                 raise FileExistsError(f"Prefix {self.path_prefix} is a file")
-        if not pgm.exists():
-            raise FileNotFoundError(f"{pgm} not found")
         if not yaml.exists():
             raise FileNotFoundError(f"{yaml} not found")
         with yaml.open("r") as yaml:
@@ -178,7 +178,7 @@ class World:
             lineType=cv2.LINE_AA,
         )
         if bg is not None:
-            cv2.putText(**args, color=bg, thickness=self.line_width * 5)
+            cv2.putText(**args, color=bg, thickness=self.line_width * 3)
         cv2.putText(**args, color=fg, thickness=self.line_width)
 
     @property
