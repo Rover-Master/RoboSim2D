@@ -8,7 +8,7 @@ from numpy import linspace
 from lib.geometry import Point
 
 
-class Bug0Right(Simulation):
+class Bug0R(Simulation):
     p0: Point[float] | None = None
     p1: Point[float] | None = None
 
@@ -24,4 +24,4 @@ class Bug0Right(Simulation):
 
 
 if __name__ == "__main__":
-    Simulation.run(Bug0Right())
+    Simulation.run(Bug0R())

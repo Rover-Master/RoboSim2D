@@ -87,17 +87,15 @@ class Lazy(Proposal):
 class Simulation:
 
     heading: float = 0.0
-
-    max_attempts: int = 1000  # Maximum number of attempts per step
-    max_travel: float = 1000.0  # Maximum travel distance
     step_length: float = 0.2  # Meters
 
     def __init__(self, **kwargs):
-        import lib.env as env
+        from lib.env import world, src_pos, dst_pos
 
-        self.world = env.world
-        self.src = env.src_pos
-        self.dst = env.dst_pos
+        self.world = world
+        self.src = src_pos
+        self.dst = dst_pos
+        self.max_travel = world.max_travel
         self.__dict__.update(kwargs)
 
     def move(self, hdg: float, d: float | None = None) -> Point[float]:
@@ -174,8 +172,6 @@ class Simulation:
                     p1 = proposal(self.pos, world=sim.world)
                     if p1 is not None:
                         break
-                    if cnt > sim.max_attempts:
-                        raise RuntimeError(f"Exceeded maximum attempts at {str(pos)}")
                 else:
                     # sim.step() exhausted, no path found
                     raise RuntimeError(
@@ -244,7 +240,7 @@ class Simulation:
         travel: float = 0.0
         p0 = sim.src
 
-        trj = np.zeros(sim.world.view.shape[:2], dtype=np.uint8)
+        trj = np.zeros(sim.world.grayscale.shape, dtype=np.uint8)
 
         def line(a: Point[float], b: Point[float]):
             cv2.line(
@@ -290,32 +286,31 @@ class Simulation:
                         break
                 print(*p0, sim.heading, sep=",")
                 p0 = p1
-                if travel > sim.max_travel:
-                    print("# Failed: Max travel distance reached")
-                    break
+                if sim.max_travel is not None and travel > sim.max_travel:
+                    raise Simulation.Abort("exceeded max travel distance")
             print(*p1, sim.heading, sep=", ")
             print("# src    =", sim.src)
             print("# dst    =", sim.dst)
             print("# travel =", round(travel, 2))
         except KeyboardInterrupt:
             failure()
-            print("# abort = user aborted")
+            print("# abort  = user aborted")
         except Simulation.Abort as e:
             failure()
-            print("# abort =", e.reason)
+            print("# abort  =", e.reason)
         except Exception as e:
             import traceback
 
             failure()
-            print("# abort = ", e)
+            print("# abort  = ", e)
             traceback.print_exception(e, file=sys.stderr)
 
         if trj_list is not None:
             trj_list_file.close()
         if trj_img is not None:
-            cv2.imwrite(str(trj_img), trj)
+            sim.world.saveImg(trj_img, trj)
         if sim_img is not None:
-            cv2.imwrite(str(sim_img), sim.visualize(None, trj, travel=travel))
+            sim.world.saveImg(sim_img, sim.visualize(None, trj, travel=travel))
         if overlay_img is not None:
             blank = np.zeros_like(trj)
             overlay = sim.visualize(
@@ -324,7 +319,7 @@ class Simulation:
             alpha = (np.max(overlay, axis=-1, keepdims=True) > 0).astype(np.uint8) * 255
             img = np.concatenate([overlay, alpha], axis=-1)
             print(img.shape, img.dtype, file=sys.stderr)
-            cv2.imwrite(str(overlay_img), img)
+            sim.world.saveImg(overlay_img, img)
         if sim.world.visualize and not sim.world.no_wait:
             try:
                 for key in repeat(cv2.waitKey, 10):
@@ -336,7 +331,7 @@ class Simulation:
 
 
 class WallFollowing:
-    wall_following_direction: Literal["CW", "CCW"] | None = None
+    wall_following_direction: Literal["L", "R"] | None = None
 
     def __init__(self):
         if not isinstance(self, Simulation):
@@ -345,9 +340,9 @@ class WallFollowing:
     @property
     def hit_wall(self: Union[Simulation, "WallFollowing"]) -> ProposalType:
         match self.wall_following_direction:
-            case "CW":
+            case "L":
                 return Eager(self.turn("left"))
-            case "CCW":
+            case "R":
                 return Eager(self.turn("right"))
         raise RuntimeError(
             f"Bad wall following direction {self.wall_following_direction}"
@@ -356,14 +351,14 @@ class WallFollowing:
     @property
     def move_along_wall(self: Union[Simulation, "WallFollowing"]) -> ProposalType:
         match self.wall_following_direction:
-            case "CW":
+            case "L":
                 return (
                     # First try to turn clockwise
                     Lazy(self.turn("right")),
                     # Right turn not viable, try left turn
                     Eager(self.turn("left")),
                 )
-            case "CCW":
+            case "R":
                 return (
                     # First try to turn counter-clockwise
                     Lazy(self.turn("left")),

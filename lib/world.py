@@ -34,8 +34,10 @@ class World:
         dpi_scale: float,
         line_width: float,
         threshold: float,  # Threshold distance near the target
+        max_travel: float | None,  # Max travel distance before aborting the simulation
         radius: float = None,
         prefix: str | None,
+        slice: tuple[int, int, int, int] | None = None,
         visualize: bool = False,
         no_wait: bool = False,
         debug: bool = False,
@@ -45,11 +47,12 @@ class World:
         pgm = path.with_suffix(".pgm")
         yaml = path.with_suffix(".yaml")
         self.name = pgm.name
-        self.res = resolution
         self.dpi_scale = dpi_scale
         self.line_width_meters = line_width
         self.threshold = threshold
+        self.max_travel = max_travel
         self.visualize = visualize
+        self._slice = slice
         self.no_wait = no_wait
         self.radius = radius
         self.debug = debug
@@ -71,7 +74,13 @@ class World:
             raise FileNotFoundError(f"{yaml} not found")
         with yaml.open("r") as yaml:
             meta: dict = safe_load(yaml.read())
-            scale = meta.get("resolution", 0.05) / resolution
+            raw_res = meta.get("resolution", 0.05)
+            if resolution is None:
+                self.res = raw_res
+                scale = 1.0
+            else:
+                self.res = resolution
+                scale = raw_res / resolution
             self.origin = Point(*meta.get("origin", [0, 0])[:2])
             if self.radius is None:
                 self.radius = float(meta.get("radius", 0.30))
@@ -83,6 +92,7 @@ class World:
             img = loadPGM(pgm)
         else:
             raise FileNotFoundError(f"{png} or {pgm} not found")
+        self.raw_shape = img.shape
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
         self.img = img
         if not negate:
@@ -94,6 +104,27 @@ class World:
         self.h, self.w = h * self.res, w * self.res
         # Rendering
         self.text_family = cv2.FONT_HERSHEY_DUPLEX
+
+    def slice(self, img: np.ndarray):
+        if self._slice is None:
+            return img
+        x, y, w, h = self._slice
+        h0, w0 = self.raw_shape
+        h1, w1 = img.shape[:2]
+        fx, fy = w1 / w0, h1 / h0
+        _x, w = int(x * fx), int(w * fx)
+        _y, h = int(y * fy), int(h * fy)
+        x = max(int(x * fx), 0)
+        y = max(int(y * fy), 0)
+        if len(img.shape) == 2:
+            return img[y : _y + h, x : _x + w]
+        elif len(img.shape) == 3:
+            return img[y : _y + h, x : _x + w, :]
+        else:
+            raise ValueError(f"Unsupported image shape {img.shape}")
+
+    def saveImg(self, path: Path | str, img: np.ndarray):
+        cv2.imwrite(str(path), self.slice(img))
 
     @property
     def marker_label_offset(self):
@@ -185,8 +216,11 @@ class World:
     def handle(self):
         return f"{self.title} - {self.name}"
 
-    def show(self, img: np.ndarray, desc: str | None = None):
-        if self.dpi_scale is not None:
+    def show(self, img: np.ndarray, desc: str | None = None, scale=None):
+        if scale is not None:
+            s = 1 / scale
+            img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+        elif self.dpi_scale is not None:
             s = 1 / self.dpi_scale
             img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
         if desc is None:
@@ -195,6 +229,18 @@ class World:
             title = f"{self.handle} ({desc})"
         cv2.imshow(title, img)
         return title
+
+    @property
+    def grayscale(self) -> np.ndarray:
+        """
+        Get the image of the world (RGB, uint8, grayscale)
+        """
+        s = self.dpi_scale
+        img = self.img
+        if s is not None:
+            return cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
+        else:
+            return img.copy()
 
     @property
     def view(self) -> np.ndarray:
@@ -247,3 +293,58 @@ class World:
             img[mask & self.occupancy] = [0, 0, 255]
             cv2.imshow(self.handle + " :: checkLine()", img)
         return not np.any(mask & self.occupancy)
+
+
+if __name__ == "__main__":
+    from .arguments import parse
+
+    name, params, args = parse()
+    world = World(str(name), **params)
+    img_path = world.withPrefix(suffix="png")
+    if world.visualize:
+        s = world.dpi_scale
+
+        x, y, w, h = world._slice or (0, 0, *world.raw_shape[::-1])
+
+        def render():
+            view = world.grayscale.astype(np.float32) / 255.0
+            mask = np.ones_like(view) * 0.5
+            mask_slice = world.slice(mask)
+            mask_slice[:, :] = 1.0
+            view = np.stack([view * mask, view * mask, view], axis=-1)
+            caption = ", ".join([str(_).ljust(3) for _ in (x, y, w, h)])
+            world.caption(view, caption, fg=(0, 0, 0), bg=[255] * 3)
+            return world.show(view, scale=1.0)
+
+        drag_origin: Point[int] | None = None
+
+        def onMouse(event, cx, cy, flags, _: None):
+            global x, y, w, h, drag_origin
+            cx = int(cx / s)
+            cy = int(cy / s)
+            if event == cv2.EVENT_LBUTTONDOWN:
+                x, y = cx, cy
+                w, h = 1, 1
+            elif event == cv2.EVENT_MBUTTONDOWN:
+                drag_origin = Point(cx, cy)
+            elif event == cv2.EVENT_MOUSEMOVE:
+                if flags == cv2.EVENT_FLAG_LBUTTON:
+                    w = max(1, cx - x)
+                    h = max(1, cy - y)
+                if flags == cv2.EVENT_FLAG_MBUTTON:
+                    if drag_origin is not None:
+                        dx, dy = cx - drag_origin.x, cy - drag_origin.y
+                        x, y = x + dx, y + dy
+                    drag_origin = Point(cx, cy)
+            else:
+                return
+            world._slice = (x, y, w, h)
+            render()
+
+        handle = render()
+        cv2.setMouseCallback(handle, onMouse)
+        while cv2.waitKey(1) < 0:
+            pass
+    if img_path is not None:
+        print("--slice=", ",".join(str(_) for _ in world._slice), sep="")
+        world.saveImg(img_path, world.grayscale)

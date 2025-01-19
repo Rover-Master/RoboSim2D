@@ -280,4 +280,4 @@ class WaveFront:
                 pass
 
         if out_img is not None:
-            cv2.imwrite(str(out_img), vis())
+            wf.world.saveImg(out_img, vis())

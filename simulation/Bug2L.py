@@ -6,9 +6,9 @@ from . import Simulation
 from .Bug2 import Bug2
 
 
-class Bug2CW(Bug2):
-    wall_following_direction = "CW"
+class Bug2L(Bug2):
+    wall_following_direction = "L"
 
 
 if __name__ == "__main__":
-    Simulation.run(Bug2CW())
+    Simulation.run(Bug2L())

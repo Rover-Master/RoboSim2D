@@ -3,12 +3,12 @@
 # License: MIT
 # ==============================================================================
 from . import Simulation
-from .Bug1 import Bug1
+from .Bug2 import Bug2
 
 
-class Bug1CCW(Bug1):
-    wall_following_direction = "CCW"
+class Bug2R(Bug2):
+    wall_following_direction = "R"
 
 
 if __name__ == "__main__":
-    Simulation.run(Bug1CCW())
+    Simulation.run(Bug2R())
