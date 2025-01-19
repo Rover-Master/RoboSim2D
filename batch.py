@@ -17,6 +17,10 @@ WATCH_LIST = [
     # ("SW", "NE", "Bug1L"),
 ]
 
+SLICE = [
+    "--slice=19,7,360,360"
+]
+
 
 def parse_outputs(stream: Iterable[bytes]):
     meta = dict[str, str]()
@@ -67,13 +71,13 @@ def simulation(
         "-m",
         f"simulation.{module}",
         world,
+        *SLICE,
         f"--prefix={prefix}",
         f"--src={','.join(map(str, p0))}",
         f"--dst={','.join(map(str, p1))}",
         # "-v",
         # "--no-wait",
         "--resolution=0.025",
-        "--slice=19,7,320,320",
         "--scale=2.0",
         *args,
     )
@@ -115,6 +119,18 @@ if __name__ == "__main__":
     parser.add_argument("modules", type=str, nargs="*")
     args = parser.parse_args()
     world = str(args.world[0])
+    # Generate world view
+    Popen(
+        (
+            python,
+            "-m",
+            f"lib.world",
+            world,
+            *SLICE,
+            f"--prefix=var/world",
+            "--scale=4.0",
+        )
+    ).wait()
     # modules = list[str](args.modules)
     modules = [
         "Bug0L",

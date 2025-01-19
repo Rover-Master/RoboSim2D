@@ -2,7 +2,7 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
-import cv2, numpy as np
+import sys, cv2, numpy as np
 from yaml import safe_load
 from pathlib import Path
 from math import ceil
@@ -343,6 +343,9 @@ if __name__ == "__main__":
         cv2.setMouseCallback(handle, onMouse)
         while cv2.waitKey(1) < 0:
             pass
+    if world._slice is not None:
+        print(
+            "--slice=", ",".join(str(_) for _ in world._slice), sep="", file=sys.stderr
+        )
     if img_path is not None:
-        print("--slice=", ",".join(str(_) for _ in world._slice), sep="")
         world.saveImg(img_path, world.grayscale)
