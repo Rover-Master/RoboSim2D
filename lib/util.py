@@ -20,6 +20,24 @@ def readline(stream: Iterable[bytes]) -> str:
     return line.decode("utf-8")
 
 
+def dup(dst, src=None):
+    from sys import stdout
+
+    if src is None:
+        src = stdout
+
+    def p(*args, file=stdout, **kwargs):
+        if file is src:
+            print(*args, file=dst, **kwargs)
+        print(*args, file=file, **kwargs)
+
+    return p
+
+
+def sign(x: int | float):
+    return (x > 0) - (x < 0)
+
+
 def periodic(v, p: float = 2 * pi):
     res = fmod(v, p)
     p2 = p / 2

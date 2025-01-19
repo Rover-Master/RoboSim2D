@@ -4,12 +4,12 @@
 # ==============================================================================
 import numpy as np
 from lib.util import sliceOffsets
-from . import WaveFront
+from . import WaveFront as WF
 
 Deltas = [sliceOffsets(x, y) for x, y in ((-1, 0), (1, 0), (0, -1), (0, 1))]
 
 
-class BFS(WaveFront):
+class WaveFront(WF):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Cache for performance
@@ -29,4 +29,4 @@ class BFS(WaveFront):
 
 
 if __name__ == "__main__":
-    WaveFront.run(BFS())
+    WF.run(WaveFront())

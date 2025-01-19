@@ -2,11 +2,81 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
+import sys, numpy as np, cv2
 from typing import Generator, Literal, Iterable
-from lib.geometry import Point
 from math import pi, cos, sin, ceil
-import numpy as np, cv2
-from lib.util import repeat
+from itertools import chain
+from lib.geometry import Point
+from lib.world import World
+from lib.util import repeat, dup
+
+
+class Proposal:
+    def __init__(self, *iterables: Iterable["Point[float] | Proposal"]):
+        self.queue = chain(*iterables)
+
+    class Session:
+        def __init__(self, p: "Proposal", p0: Point[float], world: World):
+            self.queue = iter(p.queue)
+            self.p0 = p0
+            self.world = world
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            dp = next(self.queue)
+            p0, world = self.p0, self.world
+            if isinstance(dp, Point):
+                p1 = p0 + dp
+                if self.world.checkLine(p0, p1):
+                    return p1
+            else:
+                proposal = Proposal.construct(dp)
+                p1 = proposal(p0, world)
+                if p1 is not None:
+                    return p1
+
+    def traverse(self, p0: Point[float], world: World):
+        return Proposal.Session(self, p0, world)
+
+    def __call__(self, p0: Point[float], world: World) -> Point[float] | None:
+        raise NotImplementedError
+
+    @staticmethod
+    def construct(v: Point[float] | Iterable[Point[float]] | "Proposal") -> "Proposal":
+        if isinstance(v, Proposal):
+            return v
+        elif isinstance(v, Point):
+            return Eager([v])
+        else:
+            return Eager(v)
+
+
+class Eager(Proposal):
+    """
+    Returns the FIRST viable candidate from all proposed points
+    """
+
+    def __call__(self, p0: Point[float], world: World):
+        for p1 in self.traverse(p0, world):
+            if p1 is not None:
+                return p1
+
+
+class Lazy(Proposal):
+    """
+    Returns the LAST viable candidate from a set of consecutive viable points.
+    e.g. [p1(Y), p2(Y), p3(N), p4(Y)] -> p2
+    """
+
+    def __call__(self, p0: Point[float], world: World):
+        p1 = None
+        for p in self.traverse(p0, world):
+            if p is None:
+                break
+            p1 = p
+        return p1
 
 
 class Simulation:
@@ -50,12 +120,11 @@ class Simulation:
             case _:
                 dr = float(direction) % (2 * np.pi)
         n_steps = max(ceil(abs(dr / delta)), 1)
-        print("Turn", direction, dr, n_steps)
         return map(lambda r: self.move(r0 + r), np.linspace(0, dr, n_steps))
 
     def step(
         self, pos: Point[float], dst: Point[float]
-    ) -> Generator[Point[float] | Iterable[Point[float]], None, None]:
+    ) -> Generator[Point[float] | Iterable[Point[float]] | Proposal, any, any]:
         """
         Step the simulation forward.
         Implementation needs to yield the next position of the robot.
@@ -87,24 +156,14 @@ class Simulation:
             elif not self.completed:
                 sim = self.sim
                 pos = self.pos
-                cnt = 0
                 p1: Point[float] | None = None
-                for step in sim.step(pos, sim.dst):
-                    if isinstance(step, Point):
-                        step: Iterable[Point[float]] = [step]
-                    for dp in step:
-                        p = pos + dp
-                        if sim.world.checkLine(pos, p):
-                            p1 = p
-                        else:
-                            break
-                        cnt += 1
-                        if cnt > sim.max_attempts:
-                            raise RuntimeError(
-                                f"Exceeded maximum attempts at {str(pos)}"
-                            )
+                for cnt, step in enumerate(sim.step(pos, sim.dst)):
+                    proposal = Proposal.construct(step)
+                    p1 = proposal(self.pos, world=sim.world)
                     if p1 is not None:
                         break
+                    if cnt > sim.max_attempts:
+                        raise RuntimeError(f"Exceeded maximum attempts at {str(pos)}")
                 else:
                     # sim.step() exhausted, no path found
                     raise RuntimeError(
@@ -126,73 +185,92 @@ class Simulation:
         """
         return Simulation.Session(self)
 
+    def visualize(
+        self,
+        pos: Point[float],
+        fg: np.ndarray,
+        bg: np.ndarray | None = None,
+        travel: float | None = None,
+    ):
+        world = self.world
+        if bg is None:
+            bg = world.view
+        bg[fg >= 128] = [0, 0, 255]
+        world.draw_src(bg, world.pixel_pos(self.src))
+        world.draw_dst(bg, world.pixel_pos(self.dst))
+        cv2.circle(
+            bg,
+            world.pixel_pos(pos),
+            world.px(0.1),
+            (255, 0, 0),
+            world.line_width,
+        )
+        if travel is not None:
+            world.caption(
+                bg, f"Travel: {travel:.2f} m", fg=(0, 0, 0), bg=(255, 255, 255)
+            )
+        return bg
+
     @staticmethod
     def run(sim: "Simulation"):
         """
         Run the simulation
         """
+        name = sim.__class__.__name__
+        trj_list = sim.world.withPrefix(name, suffix="txt")
+        trj_img = sim.world.withPrefix(name, suffix="png")
+        if trj_list is not None:
+            trj_list_file = open(trj_list, "w")
+            print = dup(trj_list_file)
+
         travel: float = 0.0
         p0 = sim.src
         if sim.world.visualize:
             bg = sim.world.view
             fg = np.zeros(bg.shape[:2], dtype=np.uint8)
-            r0 = None
-            p0v = p0
+            sim.world.show(sim.visualize(p0, fg, travel=0.0))
 
-            def visualize():
-                img = bg.copy()
-                img[fg >= 128] = [0, 0, 255]
-                sim.world.draw_src(img, sim.world.pixel_pos(sim.src))
-                sim.world.draw_dst(img, sim.world.pixel_pos(sim.dst))
-                cv2.circle(
-                    img,
-                    sim.world.pixel_pos(p1),
-                    sim.world.px(0.1),
-                    (255, 0, 0),
-                    sim.world.lw,
+            def line(a: Point[float], b: Point[float]):
+                cv2.line(
+                    fg,
+                    sim.world.pixel_pos(a),
+                    sim.world.pixel_pos(b),
+                    255,
+                    sim.world.line_width,
+                    cv2.LINE_AA,
                 )
-                sim.world.show(img)
 
         try:
             for p1 in sim:
-                r1 = sim.heading
-                if sim.world.visualize and r1 != r0:
-                    r0 = r1
-                    cv2.line(
-                        fg,
-                        sim.world.pixel_pos(p0v),
-                        sim.world.pixel_pos(p1),
-                        255,
-                        sim.world.lw,
-                        cv2.LINE_AA,
-                    )
-                    p0v = p1
-                    visualize()
+                travel += (p1 - p0).norm
+                if sim.world.visualize:
+                    line(p0, p1)
+                    sim.world.show(sim.visualize(p1, fg, travel=travel))
                     key = cv2.waitKey(1)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
-                travel += (p1 - p0).norm
+                print(*p0, sim.heading, sep=",")
                 p0 = p1
-                print(p1, sim.heading, sep=", ")
                 if travel > sim.max_travel:
                     print("# Failed: Max travel distance reached")
                     break
+            print(*p1, sim.heading, sep=", ")
         except KeyboardInterrupt:
             print("# Aborted by user")
         except Exception as e:
+            import traceback
+
             print("# Failed:", e)
-        else:
+            traceback.print_exception(e, file=sys.stderr)
+        finally:
+            print("# src    =", sim.src)
+            print("# dst    =", sim.dst)
+            print("# travel =", round(travel, 2))
+            if trj_list is not None:
+                trj_list_file.close()
+            if trj_img is not None:
+                cv2.imwrite(str(trj_img), fg)
             if sim.world.visualize:
-                if p0v != p1:
-                    cv2.line(
-                        fg,
-                        sim.world.pixel_pos(p0v),
-                        sim.world.pixel_pos(p1),
-                        255,
-                        sim.world.lw,
-                        cv2.LINE_AA,
-                    )
-                visualize()
                 try:
                     for key in repeat(cv2.waitKey, 10):
                         if key > 0:
@@ -200,7 +278,3 @@ class Simulation:
                 except KeyboardInterrupt:
                     pass
                 cv2.destroyAllWindows()
-        finally:
-            print("# src    =", sim.src)
-            print("# dst    =", sim.dst)
-            print("# Travel =", round(travel, 2))

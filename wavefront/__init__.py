@@ -5,7 +5,7 @@
 import numpy as np, cv2
 from lib.geometry import Point
 from math import ceil
-from lib.util import sliceOffsets
+from lib.util import dup, sliceOffsets
 
 
 class WaveFront:
@@ -43,15 +43,6 @@ class WaveFront:
         # The base field, 1.0 for free space, 0.0 for obstacles
         # `field * base` filters out probability distributions in obstacles
         self.base = 1.0 - m.astype(self.dtype)
-        # rendering properties and assets
-        diff = m ^ world.occupancy
-        r = world.dpi_scale
-        sel = cv2.resize(diff * 255, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
-        self.view = world.view
-        self.view[sel > 128, :] = 192
-        mask = m.astype(np.uint8) * 255
-        mask = cv2.resize(mask, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
-        self.mask = mask < 128
         # Discrete cartesian coordinates (per-cell)
         Y, X = np.mgrid[:h, :w].astype(self.dtype) * world.res
         ox, oy = world.world_pos(Point(0, 0))
@@ -65,6 +56,27 @@ class WaveFront:
         #   An inverse gaussian distribution around the destination
         #   It's sigma equals the threshold distance.
         self.drain_field = self.gaussian(dst_pos, world.threshold / 2)
+
+    @property
+    def mask(self):
+        # rendering properties and assets
+        r = self.world.dpi_scale
+        return (
+            cv2.resize(self.base, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
+            > 0.5
+        )
+
+    @property
+    def view(self):
+        diff = (self.base <= 0.5) ^ self.world.occupancy
+        r = self.world.dpi_scale
+        diff = (
+            cv2.resize(diff * 155, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
+            >= 128
+        )
+        view = self.world.view
+        view[diff, :] = 192
+        return view
 
     def norm(self, field: np.ndarray) -> np.ndarray:
         f = np.maximum(field * self.base, 0.0).astype(self.dtype)
@@ -87,7 +99,7 @@ class WaveFront:
         s = self.world.dpi_scale
         if invert:
             field = 1.0 - field
-        field = np.clip(field / field.max(), 0.0, 1.0)
+        field = np.clip(field, 0.0, 1.0)
         field = cv2.resize(field, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
         field = np.stack([field] * 3, axis=-1)
         f0, f1 = 1.0 - field, field
@@ -98,19 +110,19 @@ class WaveFront:
         self,
         field: np.ndarray,
         c0: list[float] = [0.0, 0.0, 1.0],
-        c1: list[float] = [0.0, 0.0, 1.0],
+        c1: list[float] = [1.0, 0.5, 0.0],
         invert: bool = False,
     ) -> np.ndarray:
         # Requires float array of range [0.0, 1.0]
         s = self.world.dpi_scale
         if invert:
             field = 1.0 - field
-        field = np.clip(field / field.max(), 0.0, 1.0)
+        field = np.clip(field, 0.0, 1.0)
         field = cv2.resize(field, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
         field = np.stack([field] * 3, axis=-1)
         f0, f1 = 1.0 - field, field
-        bg = np.ones_like(field) * c0
-        fg = np.ones_like(field) * c1
+        bg = np.ones_like(field) * c1
+        fg = np.ones_like(field) * c0
         return bg * f0 + fg * f1
 
     # GPU Acceleration
@@ -167,7 +179,14 @@ class WaveFront:
 
     @staticmethod
     def run(wf: "WaveFront"):
-        U = list[np.ndarray]()
+        name = wf.__class__.__name__
+        out_list = wf.world.withPrefix(name, suffix="txt")
+        out_img = wf.world.withPrefix(name, suffix="png")
+        if out_list is not None:
+            trj_list_file = open(out_list, "w")
+            print = dup(trj_list_file)
+
+        U = np.zeros_like(wf.base)
         P = list[float]()
         T = list[float]()
         t = 0.0
@@ -180,24 +199,17 @@ class WaveFront:
             (plot,) = ax.plot([], [], "r-", lw=2)
             last_vis_t = 0.0
             dp_max = 0.0
+            bg = wf.view.astype(wf.dtype) / 255.0
 
-            def visualize(u, p, dp):
+            def visualize(u: np.ndarray, p: float, dp: float):
                 nonlocal plot, dp_max
                 dp_max = max(dp_max, dp)
-                bg = wf.view.astype(wf.dtype) / 255.0
-                m = wf.render(bg, u, color=[0.0, 0.0, 1.0])
+                m = wf.render(bg, u / u.max(), color=[0.0, 0.0, 1.0])
                 m = (m * 255.0).astype(np.uint8)
                 wf.world.draw_src(m, wf.world.pixel_pos(wf.src))
                 wf.world.draw_dst(m, wf.world.pixel_pos(wf.dst))
-                cv2.putText(
-                    m,
-                    f"Travel {t:.2f}m | Progress {(1.0 - p) * 100.0:.2f}%",
-                    (20, m.shape[0] - 20),
-                    wf.world.text_family,
-                    wf.world.text_scale,
-                    (0, 128, 0),
-                    wf.world.lw,
-                )
+                caption = f"Travel {t:.2f}m | Progress {(1.0 - p) * 100.0:.2f}%"
+                wf.world.caption(m, caption, fg=(0, 0, 0), bg=(255, 255, 255))
                 wf.world.show(m)
                 # T-P Plot
                 ax.set_xlim(0, max(t, 1.0))
@@ -206,8 +218,10 @@ class WaveFront:
                 (plot,) = ax.plot(T, P, "r-", lw=2)
                 fig.show()
 
-        for u, p, dp in wf:
-            # U.append(u)
+        n = 0
+        for n, (u, p, dp) in enumerate(wf):
+            U += u
+            print(t, p, dp, sep=", ")
             P.append(dp)
             T.append(t)
             t += dt
@@ -217,23 +231,51 @@ class WaveFront:
                 visualize(u, p, dp)
                 if cv2.waitKey(1) > 0:
                     break
-
         x = np.array(T)
         y = np.array(P)
-        print(f"# Coverage = {y.sum():.4f}")
+        print(f"# coverage = {y.sum():.4f}")
         y /= y.sum()
         mean = np.sum(x * y)
-        print(f"# Travel   = {mean:.4f}")
+        print(f"# travel   = {mean:.4f}")
         variance = np.sum((x - mean) ** 2 * y)
         std = np.sqrt(variance)
-        print(f"# Std      = {std:.4f}")
+        print(f"# std      = {std:.4f}")
+
+        wf.world.dpi_scale = max(wf.world.dpi_scale, 2.0)
+        # u = U / float(n + 1)
+        amp: float = 1.0
+        bg = wf.view.astype(wf.dtype) / 255.0
+
+        def vis():
+            u = U * amp / U.max()
+            v = bg.copy()
+            v[wf.mask] = wf.heatmap(u)[wf.mask]
+            v = (v * 255.0).astype(np.uint8)
+            caption = f"Expected Travel: {mean:.2f} +/- {std:.2f}m"
+            wf.world.draw_src(v, wf.world.pixel_pos(wf.src))
+            wf.world.draw_dst(v, wf.world.pixel_pos(wf.dst))
+            wf.world.caption(v, caption, fg=(0, 0, 0), bg=(255, 255, 255))
+            return v
+
+        def renderVis(_amp: float | None = None):
+            nonlocal amp
+            if _amp is not None and _amp >= 1.0:
+                amp = _amp
+            return wf.world.show(vis(), "probability distribution")
 
         if wf.world.visualize:
             if t != last_vis_t:
                 visualize(u, p, dp)
+                handle = renderVis()
+                cv2.createTrackbar(
+                    "AMP", handle, int(amp * 10), 100, lambda v: renderVis(v / 10.0)
+                )
             try:
                 while True:
                     if cv2.waitKey(1) > 0:
                         break
             except:
                 pass
+
+        if out_img is not None:
+            cv2.imwrite(str(out_img), vis())

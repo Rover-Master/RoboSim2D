@@ -3,7 +3,6 @@
 # License: MIT
 # ==============================================================================
 from argparse import ArgumentParser
-from math import ceil
 from .world import World
 from .geometry import Point
 
@@ -14,7 +13,11 @@ def parse_point(s: str) -> Point[float]:
 
 parser = ArgumentParser()
 
-parser.add_argument("map", type=str, help="Path to the map file", nargs=1)
+parser.add_argument("world", type=str, help="Path to the map file", nargs=1)
+# Destination folder
+parser.add_argument(
+    "--prefix", type=str, help="Destination file or folder", default=None
+)
 # Simulation parameters
 parser.add_argument("--src", type=parse_point, help="Source", default=None)
 parser.add_argument("--dst", type=parse_point, help="Destination", default=None)
@@ -63,6 +66,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 params = dict(
+    prefix=args.prefix,
     radius=args.radius,
     threshold=float(args.threshold),
     dpi_scale=float(args.scale),
@@ -72,7 +76,7 @@ params = dict(
     debug=bool(args.debug),
 )
 
-world = World(str(args.map[0]), **params)
+world = World(str(args.world[0]), **params)
 
 src_pos: Point[float] = args.src
 dst_pos: Point[float] = args.dst
@@ -81,3 +85,7 @@ if src_pos is None or dst_pos is None:
     from lib.interact import prompt
 
     src_pos, dst_pos = prompt(world, src_pos, dst_pos)
+
+if __name__ == "__main__":
+    print("SRC", src_pos)
+    print("DST", dst_pos)

@@ -29,11 +29,13 @@ class World:
     def __init__(
         self,
         map_name: Path | str,
+        *,
         resolution: float,
         dpi_scale: float,
         line_width: float,
-        threshold: float,  # Distance threshold
+        threshold: float,  # Threshold distance near the target
         radius: float = None,
+        prefix: str | None,
         visualize: bool = False,
         debug: bool = False,
     ):
@@ -44,10 +46,25 @@ class World:
         self.name = pgm.name
         self.res = resolution
         self.dpi_scale = dpi_scale
+        self.line_width_meters = line_width
         self.threshold = threshold
         self.visualize = visualize
         self.radius = radius
         self.debug = debug
+        if prefix is None:
+            self.path_prefix = None
+            self.file_prefix = None
+        elif prefix.endswith("/"):
+            self.path_prefix = Path(prefix)
+            self.file_prefix = ""
+        else:
+            self.path_prefix = Path(prefix).parent
+            self.file_prefix = Path(prefix).name
+        if self.path_prefix:
+            if not self.path_prefix.exists():
+                self.path_prefix.mkdir(parents=True, exist_ok=True)
+            elif self.path_prefix.is_file():
+                raise FileExistsError(f"Prefix {self.path_prefix} is a file")
         if not pgm.exists():
             raise FileNotFoundError(f"{pgm} not found")
         if not yaml.exists():
@@ -57,7 +74,7 @@ class World:
             scale = meta.get("resolution", 0.05) / resolution
             self.origin = Point(*meta.get("origin", [0, 0])[:2])
             if self.radius is None:
-                self.radius = float(meta.get("radius", 0.25))
+                self.radius = float(meta.get("radius", 0.30))
             threshold = ceil(255 * (1.0 - meta.get("free_thresh", 0.25)))
             negate = bool(meta.get("negate", False))
         if png.is_file():
@@ -76,11 +93,35 @@ class World:
         h, w = self.occupancy.shape
         self.h, self.w = h * self.res, w * self.res
         # Rendering
-        dx = int(0.2 / resolution * dpi_scale)
-        self.text_offset = Point(dx * 2, dx, type=int)
-        self.text_family = cv2.FONT_HERSHEY_SIMPLEX
-        self.text_scale = 0.02 / resolution * dpi_scale
-        self.lw = self.px(line_width)
+        self.text_family = cv2.FONT_HERSHEY_DUPLEX
+
+    @property
+    def marker_label_offset(self):
+        dx = int(0.2 / self.res * self.dpi_scale)
+        return Point(dx * 2, dx, type=int)
+
+    @property
+    def text_scale(self):
+        return 0.02 / self.res * self.dpi_scale
+
+    @property
+    def line_width(self):
+        return self.px(self.line_width_meters)
+
+    def withPrefix(self, stem: str | None = None, suffix: str | None = None):
+        if self.path_prefix is None or self.file_prefix is None:
+            return None
+        if self.file_prefix and stem:
+            name = "-".join((self.file_prefix, stem))
+        elif self.file_prefix or stem:
+            name = self.file_prefix or stem
+        else:
+            name = self.path_prefix.name
+        if suffix:
+            if suffix.startswith("."):
+                raise ValueError("suffix should not start with '.'")
+            name = f"{name}.{suffix}"
+        return self.path_prefix / name
 
     def px(self, d: float):
         return int(d / self.res * self.dpi_scale) or 1
@@ -92,42 +133,68 @@ class World:
         dst: Point[float],
         color: tuple[int, int, int] | int = 255,
     ):
-        cv2.line(img, src, dst, color, self.lw, cv2.LINE_AA)
+        cv2.line(img, src, dst, color, self.line_width, cv2.LINE_AA)
 
     def draw_src(self, img: np.ndarray, pos: Point[int], color=(255, 0, 0)):
-        cv2.circle(img, pos, self.px(0.2), color, self.lw)
+        cv2.circle(img, pos, self.px(0.2), color, self.line_width)
         cv2.putText(
             img,
             "SRC",
-            pos + self.text_offset,
+            pos + self.marker_label_offset,
             self.text_family,
             self.text_scale,
             color,
-            self.lw,
+            self.line_width,
         )
 
     def draw_dst(self, img: np.ndarray, pos: Point[int], color=(0, 192, 0)):
-        cv2.drawMarker(img, pos, color, cv2.MARKER_SQUARE, self.px(0.4), self.lw)
+        cv2.drawMarker(
+            img, pos, color, cv2.MARKER_SQUARE, self.px(0.4), self.line_width
+        )
         cv2.putText(
             img,
             "DST",
-            pos + self.text_offset,
+            pos + self.marker_label_offset,
             self.text_family,
             self.text_scale,
             color,
-            self.lw,
+            self.line_width,
         )
+
+    def caption(
+        self,
+        img: np.ndarray,
+        text: str,
+        fg=(128, 128, 128),
+        bg: tuple[int, int, int] | None = None,
+    ):
+        a = self.px(0.4)
+        args = dict(
+            img=img,
+            text=text,
+            org=(a, img.shape[0] - a),
+            fontFace=self.text_family,
+            fontScale=self.text_scale,
+            lineType=cv2.LINE_AA,
+        )
+        if bg is not None:
+            cv2.putText(**args, color=bg, thickness=self.line_width * 5)
+        cv2.putText(**args, color=fg, thickness=self.line_width)
 
     @property
     def handle(self):
         return f"{self.title} - {self.name}"
 
-    def show(self, img: np.ndarray):
+    def show(self, img: np.ndarray, desc: str | None = None):
         if self.dpi_scale is not None:
             s = 1 / self.dpi_scale
             img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
-        cv2.imshow(self.handle, img)
-        return self.handle
+        if desc is None:
+            title = self.handle
+        else:
+            title = f"{self.handle} ({desc})"
+        cv2.imshow(title, img)
+        return title
 
     @property
     def view(self) -> np.ndarray:
