@@ -204,7 +204,7 @@ class Simulation:
         world = self.world
         if bg is None:
             bg = world.view
-        bg[fg >= 128] = [0, 0, 255]
+        bg[fg >= 128] = world.line_color
         world.draw_src(bg, world.pixel_pos(self.src))
         world.draw_dst(bg, world.pixel_pos(self.dst))
         if pos is not None:

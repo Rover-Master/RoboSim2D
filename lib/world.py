@@ -31,6 +31,7 @@ class World:
         resolution: float,
         dpi_scale: float,
         line_width: float,
+        line_color: tuple[int, int, int],
         threshold: float,  # Threshold distance near the target
         max_travel: float | None,  # Max travel distance before aborting the simulation
         radius: float = None,
@@ -47,6 +48,7 @@ class World:
         self.name = pgm.name
         self.dpi_scale = dpi_scale
         self.line_width_meters = line_width
+        self.line_color = line_color
         self.threshold = threshold
         self.max_travel = max_travel
         self.visualize = visualize

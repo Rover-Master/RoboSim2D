@@ -182,6 +182,7 @@ class WaveFront:
         name = wf.__class__.__name__
         out_list = wf.world.withPrefix(name, suffix="txt")
         out_img = wf.world.withPrefix(name, suffix="png")
+        out_fig = wf.world.withPrefix(name, suffix="pdf")
         if out_list is not None:
             trj_list_file = open(out_list, "w")
             print = dup(trj_list_file)
@@ -199,6 +200,7 @@ class WaveFront:
 
             fig, ax = plt.subplots()
             (plot,) = ax.plot([], [], "r-", lw=2)
+
             last_vis_t = 0.0
             dp_max = 0.0
             bg = wf.view.astype(wf.dtype) / 255.0
@@ -281,3 +283,13 @@ class WaveFront:
 
         if out_img is not None:
             wf.world.saveImg(out_img, vis())
+
+        if out_fig is not None:
+
+            import matplotlib.pyplot as plt
+
+            fig, ax = plt.subplots()
+            ax.plot(T, P, "r-", lw=2)
+            ax.set_xlim(0, max(t, 1.0))
+            ax.set_ylim(0, max(max(P), 1e-10))
+            fig.savefig(out_fig, transparent=True)

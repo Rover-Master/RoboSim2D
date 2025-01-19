@@ -10,8 +10,11 @@ def parse_point(s: str) -> Point[float]:
     return Point(*s.split(","), type=float)
 
 
-def parse_slice(s: str):
-    return tuple(map(int, s.split(",")))
+def tuple_of(t: type):
+    def transform(s: str) -> tuple:
+        return tuple(map(t, s.split(",")))
+
+    return transform
 
 
 parser = ArgumentParser()
@@ -64,11 +67,16 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
-    "-w",
     "--line-width",
     help="Line Width for Visualization, in Meters",
     type=float,
     default=0.05,
+)
+parser.add_argument(
+    "--line-color",
+    help="Color of the trajectory line",
+    type=tuple_of(float),
+    default=(0, 0, 255),
 )
 parser.add_argument(
     "-R",
@@ -81,7 +89,7 @@ parser.add_argument(
     "-S",
     "--slice",
     help="Output Image Slice (x, y, w, h)",
-    type=parse_slice,
+    type=tuple_of(int),
     default=None,
 )
 parser.add_argument(
@@ -103,6 +111,7 @@ def parse():
         visualize=args.visualize,
         no_wait=args.no_wait,
         line_width=args.line_width,
+        line_color=args.line_color,
         resolution=args.resolution,
         slice=args.slice,
         debug=args.debug,

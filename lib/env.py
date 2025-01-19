@@ -21,3 +21,10 @@ if src_pos is None or dst_pos is None:
 if __name__ == "__main__":
     print("SRC", src_pos)
     print("DST", dst_pos)
+
+from os import environ
+
+if "SEED" in environ:
+    from random import seed
+
+    seed(int(environ["SEED"]))
