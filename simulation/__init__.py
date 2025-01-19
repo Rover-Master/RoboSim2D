@@ -253,7 +253,6 @@ class Simulation:
             )
 
         def failure():
-            print("# travel  = N/A")
             cv2.drawMarker(
                 trj,
                 sim.world.pixel_pos(p1),
@@ -291,7 +290,7 @@ class Simulation:
             print(*p1, sim.heading, sep=", ")
             print("# src    =", sim.src)
             print("# dst    =", sim.dst)
-            print("# travel =", round(travel, 2))
+            print("# travel =", f"{travel:.2f}")
         except KeyboardInterrupt:
             failure()
             print("# abort  = user aborted")
@@ -318,7 +317,6 @@ class Simulation:
             )
             alpha = (np.max(overlay, axis=-1, keepdims=True) > 0).astype(np.uint8) * 255
             img = np.concatenate([overlay, alpha], axis=-1)
-            print(img.shape, img.dtype, file=sys.stderr)
             sim.world.saveImg(overlay_img, img)
         if sim.world.visualize and not sim.world.no_wait:
             try:

@@ -5,6 +5,7 @@
 from os import cpu_count
 from sys import stdin, stdout, stderr, executable as python
 from yaml import safe_load as parse
+from typing import Iterable
 from argparse import ArgumentParser
 from multiprocessing import Pool
 from subprocess import Popen, PIPE, DEVNULL
@@ -15,6 +16,40 @@ WATCH_LIST = [
     # ("SW", "C", "Bug1L"),
     # ("SW", "NE", "Bug1L"),
 ]
+
+
+def parse_outputs(stream: Iterable[bytes]):
+    meta = dict[str, str]()
+    for line in stream:
+        try:
+            line = line.decode("utf-8").strip()
+            if line.startswith("#"):
+                k, v = (s.strip() for s in line[1:].split("="))
+                meta[k] = v
+        except:
+            pass
+    return meta
+
+
+def format_message(desc: tuple[str, str, str], dt: float, meta: dict[str, str]) -> str:
+    module, src, dst = desc
+    msg = [
+        f"{src.rjust(2)}-{dst.ljust(2)}::{module.split('.')[-1].ljust(8)}",
+        f"{dt:.2f}s",
+    ]
+    try:
+        travel = meta.get("travel", "--.--").rjust(6)
+        t_msg = f"travel {travel}"
+        if "std" in meta:
+            std = meta.get("std", "N/A").ljust(6)
+            t_msg += f" +/- {std}"
+        t_msg += " m"
+        msg.append(t_msg)
+        if "abort" in meta:
+            msg.append("aborted: " + meta["abort"])
+    except Exception as e:
+        msg.append(str(e))
+    return " | ".join(msg)
 
 
 def simulation(
@@ -49,24 +84,10 @@ def simulation(
     t0 = time()
     proc = Popen(args, stdout=PIPE, stderr=None)
     print(*args, file=stderr)
-    outputs = dict[str, str]()
-    for line in proc.stdout:
-        try:
-            line = line.decode("utf-8").strip()
-            if line.startswith("#"):
-                k, v = (s.strip() for s in line[1:].split("="))
-                outputs[k] = v
-        except:
-            pass
+    meta = parse_outputs(proc.stdout)
     proc.wait()
     t1 = time()
-    msg = f"{src.rjust(2)}-{dst.ljust(2)}::{module.split('.')[-1].ljust(8)}"
-    travel = outputs.get("travel", "N/A").rjust(6)
-    std = outputs.get("std", "N/A").ljust(6)
-    msg += f" | travel {travel} +/- {std} m | {t1 - t0:.2f} s"
-    if "abort" in outputs:
-        msg += " aborted: " + outputs["abort"]
-    return msg
+    return (module, src, dst), t1 - t0, meta
 
 
 def simulation_unpack(args):
@@ -114,7 +135,7 @@ if __name__ == "__main__":
         file=stdout,
     )
     with Pool(max(1, cpu_count() // 2)) as pool:
-        for _ in pool.imap_unordered(simulation_unpack, tasks):
-            progress.write(_)
+        for desc, dt, meta in pool.imap_unordered(simulation_unpack, tasks):
+            progress.write(format_message(desc, dt, meta))
             progress.update(1)
     progress.clear()
