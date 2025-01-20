@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # ==============================================================================
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
@@ -22,20 +23,35 @@ WATCH_LIST = [
 SLICE = {"slice": "19,7,320,320"}
 
 
+def camel2dash(s: str) -> str:
+    import re
+
+    return re.sub(r"([a-z])([A-Z])", r"\1-\2", s).lower()
+
+
+def kw2cmdline(**kwargs):
+    for k, v in kwargs.items():
+        if type(v) is bool:
+            if v:
+                yield f"--{camel2dash(k)}"
+        else:
+            yield f"--{camel2dash(k)}={v}"
+
+
 class Python:
     def __init__(self, module: str, **env):
         self.module = module
         self.env = env
 
     def __call__(self, *args, **kwargs):
-        kw = map(lambda k, v: f"--{k}={v}", *zip(*kwargs.items()))
-        args = executable, "-m", self.module, *args, *kw
+        args = executable, "-m", self.module, *args, *kw2cmdline(**kwargs)
         print(*args, file=stderr)
         return Popen(args, stdout=PIPE, env=self.env)
 
 
 def parse_outputs(stream: Iterable[bytes]) -> dict[str, str]:
     from yaml import safe_load
+
     data = []
     for line in stream:
         try:
@@ -144,9 +160,12 @@ def factory(f):
 
 @factory
 def Bug(*_):
-    for n in range(3):
+    for i, n in enumerate([1, 2, 0]):
+        r = 0.2 + 0.2 * i
         for d in "LR":
-            kw = dict()
+            kw = dict(resolution=0.025, radius=r, stepLength=0.05)
+            if n == 1:
+                kw |= dict(noOverlap=True)
             env = dict()
             yield f"simulation.Bug{n}{d}", env, kw
 
@@ -158,8 +177,9 @@ def RandomWalk(N: int = 100, *_):
         kw = dict()
         yield f"simulation.RandomWalk", env, kw
 
+
 @factory
-def WaveFront(queue, src: str, dst:str, *_):
+def WaveFront(queue, src: str, dst: str, *_):
     env = dict()
     kw = dict()
     filter = WaveFrontFilter
@@ -167,10 +187,12 @@ def WaveFront(queue, src: str, dst:str, *_):
     yield f"wavefront.WaveFront", env, kw, filter, desc, queue
 
 
-def WaveFrontFilter(lines: Iterable[bytes], desc: str, queue = None):
+def WaveFrontFilter(lines: Iterable[bytes], desc: str, queue=None):
     slot: int = queue.get() if queue is not None else 1
     fmt = "{l_bar}{bar}| {n:.3f}/{total_fmt} [{elapsed}]"
-    prog = tqdm(total=1.0, desc=desc.rjust(9), position=slot, bar_format=fmt, **ProgOpts)
+    prog = tqdm(
+        total=1.0, desc=desc.rjust(9), position=slot, bar_format=fmt, **ProgOpts
+    )
     for b in lines:
         line = b.decode("utf-8").strip()
         if line.startswith("#"):
@@ -192,6 +214,7 @@ META = dict[str, dict[str, str]]()
 Combs = Iterable[tuple[str, str, str, dict[str, str]]]
 ProgOpts = dict(leave=False, dynamic_ncols=True, file=stdout)
 
+
 def runBugAlgorithms(*combs: Combs):
     # Bug algorithms
     tasks = list(chain(*map(Bug(), *zip(*combs))))
@@ -202,6 +225,7 @@ def runBugAlgorithms(*combs: Combs):
             progress.write(format_message(triplet, dt, meta))
             progress.update(1)
     progress.clear()
+
 
 def runRandomWalk(*combs: Combs):
     # Random Walk algorithms
@@ -227,6 +251,7 @@ def runRandomWalk(*combs: Combs):
             META["-".join(triplet)] = meta
             prog1.write(format_message(triplet, t, meta))
 
+
 def runWaveFrontPool(*combs: Combs):
     # WaveFront algorithms
     slots = max(1, cpu_count() // 4)
@@ -242,6 +267,7 @@ def runWaveFrontPool(*combs: Combs):
             progress.update(1)
     progress.clear()
 
+
 def runWaveFrontSync(*combs: Combs):
     # WaveFront algorithms
     tasks = list(chain(*map(WaveFront(None), *zip(*combs))))
@@ -252,8 +278,9 @@ def runWaveFrontSync(*combs: Combs):
         progress.update(1)
     progress.clear()
 
+
 if __name__ == "__main__":
-    parser = ArgumentParser()
+    parser = ArgumentParser(prog="python3 -m batch")
     parser.add_argument("world", type=str, nargs=1)
     parser.add_argument("modules", type=str, nargs="*")
     args = parser.parse_args()
@@ -269,4 +296,5 @@ if __name__ == "__main__":
     meta_path = Path("results/meta.yaml")
     with meta_path.open("w") as f:
         from yaml import dump
+
         dump(META, f)

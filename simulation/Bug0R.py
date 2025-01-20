@@ -16,7 +16,7 @@ class Bug0R(Simulation):
         if self.p0 is not None and (self.p0 - pos).norm < self.step_length:
             raise Simulation.Abort("dead-loop")
         self.p0, self.p1 = self.p1, pos
-        r = (dst - pos).angle - 0.5 * pi
+        r = (dst - pos).angle
         # First try to move directly to the destination
         yield self.move(r)
         # Then try to move along the obstacle

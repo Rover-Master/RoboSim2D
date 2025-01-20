@@ -6,6 +6,14 @@ import builtins, sys, numpy as np, cv2
 from typing import Generator, Literal, Iterable, Union
 from math import pi, cos, sin, ceil
 from itertools import chain
+from contextlib import contextmanager, closing
+
+from lib.arguments import parser
+
+parser.add_argument(
+    "--step-length", type=float, help="Step length in meters", default=0.1
+)
+
 from lib.geometry import Point
 from lib.world import World
 from lib.util import repeat, dup, Retry
@@ -16,31 +24,31 @@ class Proposal:
         self.queue = chain(*iterables)
 
     class Session:
-        def __init__(self, p: "Proposal", p0: Point[float], world: World):
+        def __init__(self, p: "Proposal", p0: Point[float], sim: "Simulation"):
             self.queue = iter(p.queue)
             self.p0 = p0
-            self.world = world
+            self.sim = sim
 
         def __iter__(self):
             return self
 
         def __next__(self):
             dp = next(self.queue)
-            p0, world = self.p0, self.world
+            p0, sim = self.p0, self.sim
             if isinstance(dp, Point):
                 p1 = p0 + dp
-                if self.world.checkLine(p0, p1):
+                if (not sim.check) or sim.world.checkLine(p0, p1):
                     return p1
             else:
                 proposal = Proposal.construct(dp)
-                p1 = proposal(p0, world)
+                p1 = proposal(p0, sim)
                 if p1 is not None:
                     return p1
 
-    def traverse(self, p0: Point[float], world: World):
-        return Proposal.Session(self, p0, world)
+    def traverse(self, p0: Point[float], sim: "Simulation"):
+        return Proposal.Session(self, p0, sim)
 
-    def __call__(self, p0: Point[float], world: World) -> Point[float] | None:
+    def __call__(self, p0: Point[float], sim: "Simulation") -> Point[float] | None:
         raise NotImplementedError
 
     @staticmethod
@@ -63,8 +71,8 @@ class Eager(Proposal):
     Returns the FIRST viable candidate from all proposed points
     """
 
-    def __call__(self, p0: Point[float], world: World):
-        for p1 in self.traverse(p0, world):
+    def __call__(self, p0: Point[float], sim: "Simulation"):
+        for p1 in self.traverse(p0, sim):
             if p1 is not None:
                 return p1
 
@@ -75,9 +83,9 @@ class Lazy(Proposal):
     e.g. [p1(Y), p2(Y), p3(N), p4(Y)] -> p2
     """
 
-    def __call__(self, p0: Point[float], world: World):
+    def __call__(self, p0: Point[float], sim: "Simulation"):
         p1 = None
-        for p in self.traverse(p0, world):
+        for p in self.traverse(p0, sim):
             if p is None:
                 break
             p1 = p
@@ -85,18 +93,27 @@ class Lazy(Proposal):
 
 
 class Simulation:
-
     heading: float = 0.0
-    step_length: float = 0.2  # Meters
 
     def __init__(self, **kwargs):
-        from lib.env import world, src_pos, dst_pos
+        from lib.env import world, src_pos, dst_pos, args
 
+        self.step_length: float = args.step_length
         self.world = world
         self.src = src_pos
         self.dst = dst_pos
         self.max_travel = world.max_travel
         self.__dict__.update(kwargs)
+
+    check: bool = True
+
+    @property
+    @contextmanager
+    def no_check(self):
+        check = self.check
+        self.check = False
+        yield
+        self.check = check
 
     def move(self, hdg: float, d: float | None = None) -> Point[float]:
         """
@@ -104,7 +121,7 @@ class Simulation:
         Heading is in radians.
         """
         # zero heading pointing up (north)
-        r = hdg + 0.5 * np.pi
+        r = hdg
         if d is None:
             d = self.step_length
         return Point(d * cos(r), d * sin(r), type=float)
@@ -165,19 +182,20 @@ class Simulation:
                 sim = self.sim
                 pos = self.pos
                 p1: Point[float] | None = None
-                for cnt, step in enumerate(sim.step(pos, sim.dst)):
-                    if step is None:
-                        raise Retry
-                    proposal = Proposal.construct(step)
-                    p1 = proposal(self.pos, world=sim.world)
-                    if p1 is not None:
-                        break
-                else:
-                    # sim.step() exhausted, no path found
-                    raise RuntimeError(
-                        f"{sim.__class__.__name__}.step() exhausted at {pos}"
-                    )
-                self.sim.heading = (p1 - pos).angle - 0.5 * pi
+                with closing(sim.step(pos, sim.dst)) as proposals:
+                    for step in proposals:
+                        if step is None:
+                            raise Retry
+                        proposal = Proposal.construct(step)
+                        p1 = proposal(self.pos, self.sim)
+                        if p1 is not None:
+                            break
+                    else:
+                        # sim.step() exhausted, no path found
+                        raise RuntimeError(
+                            f"{sim.__class__.__name__}.step() exhausted at {pos}"
+                        )
+                self.sim.heading = (p1 - pos).angle
                 self.pos = p1
                 self.completed = sim.isComplete(pos, sim.dst)
                 return self.pos
@@ -283,7 +301,7 @@ class Simulation:
                     key = cv2.waitKey(1)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
-                print(*p0, sim.heading, sep=",")
+                print(*p0, sim.heading - 0.5 * pi, sep=",")
                 p0 = p1
                 if sim.max_travel is not None and travel > sim.max_travel:
                     raise Simulation.Abort("exceeded max travel distance")

@@ -49,7 +49,7 @@ class Bug2(Simulation, WallFollowing):
 
     def step(self, pos, dst):
         if self.r is None:
-            self.r = (dst - pos).angle - 0.5 * pi
+            self.r = (dst - pos).angle
         if self.n_steps == 0:
             self.src_pos = pos
         self.n_steps += 1
