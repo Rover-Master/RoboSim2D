@@ -29,6 +29,7 @@ class World:
         map_name: Path | str,
         *,
         resolution: float,
+        scale: float,
         dpi_scale: float,
         line_width: float,
         line_color: tuple[int, int, int],
@@ -46,6 +47,7 @@ class World:
         pgm = path.with_suffix(".pgm")
         yaml = path.with_suffix(".yaml")
         self.name = pgm.name
+        self.scale = scale
         self.dpi_scale = dpi_scale
         self.line_width_meters = line_width
         self.line_color = line_color
@@ -128,12 +130,12 @@ class World:
 
     @property
     def marker_label_offset(self):
-        dx = int(0.2 / self.res * self.dpi_scale)
+        dx = int(0.2 / self.res * self.scale * self.dpi_scale)
         return Point(dx * 2, dx, type=int)
 
     @property
     def text_scale(self):
-        return 0.02 / self.res * self.dpi_scale
+        return 0.02 / self.res * self.scale * self.dpi_scale
 
     @property
     def line_width(self):
@@ -155,7 +157,7 @@ class World:
         return self.path_prefix / name
 
     def px(self, d: float):
-        return int(d / self.res * self.dpi_scale) or 1
+        return int(d / self.res * self.scale * self.dpi_scale) or 1
 
     def line(
         self,
@@ -214,7 +216,7 @@ class World:
 
     @property
     def handle(self):
-        return f"{self.title} - {self.name}"
+        return self.name
 
     def show(self, img: np.ndarray, desc: str | None = None, scale=None):
         if scale is not None:
@@ -235,7 +237,7 @@ class World:
         """
         Get the image of the world (RGB, uint8, grayscale)
         """
-        s = self.dpi_scale
+        s = self.scale * self.dpi_scale
         img = self.img
         if s is not None:
             return cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
@@ -247,26 +249,28 @@ class World:
         """
         Get the image of the world (RGB, uint8, grayscale)
         """
-        s = self.dpi_scale
+        s = self.scale * self.dpi_scale
         img = self.img
         if s is not None:
             img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
         return np.stack([img] * 3, axis=-1)
 
-    def world_pos(self, p: Point[int]) -> Point[float]:
+    def world_pos(self, p: Point[int], scale: float | None = None) -> Point[float]:
         """
-        Get world location given the img point
+        Get world location given the pixel coordinates on the view
         """
-        k = self.res
+        if scale is None:
+            scale = self.scale
+        k = self.res / self.scale
         x0, y0 = self.origin
         return Point(p.x * k + x0, (self.h - p.y * k) + y0, type=float)
 
     def pixel_pos(self, p: Point[float], scale: float | None = None) -> Point[int]:
         """
-        Get img location given the world point
+        Get location on the view given the world coordinates in meters
         """
         if scale is None:
-            scale = self.dpi_scale
+            scale = self.scale * self.dpi_scale
 
         k = scale / self.res
         x0, y0 = self.origin
@@ -291,7 +295,7 @@ class World:
             img = np.stack([self.img.copy()] * 3, axis=-1)
             img[mask] = [0, 192, 0]
             img[mask & self.occupancy] = [0, 0, 255]
-            cv2.imshow(self.handle + " :: checkLine()", img)
+            cv2.imshow(self.handle + " :: DEBUG", img)
         return not np.any(mask & self.occupancy)
 
 

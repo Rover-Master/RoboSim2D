@@ -54,6 +54,9 @@ parser.add_argument(
     "-s", "--scale", type=float, help="DPI Scale for UI display", default=2.0
 )
 parser.add_argument(
+    "--dpi-scale", type=float, help="DPI Scale for UI display", default=1.0
+)
+parser.add_argument(
     "-v",
     "--visualize",
     help="Visualize Simulation",
@@ -107,7 +110,8 @@ def parse():
         radius=args.radius,
         threshold=args.threshold,
         max_travel=args.max_travel,
-        dpi_scale=args.scale,
+        scale=args.scale,
+        dpi_scale=args.dpi_scale,
         visualize=args.visualize,
         no_wait=args.no_wait,
         line_width=args.line_width,
