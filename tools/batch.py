@@ -159,13 +159,16 @@ def factory(f):
 
 
 @factory
-def Bug(*_):
+def Bug(demo: bool, *_):
     for i, n in enumerate([1, 2, 0]):
         r = 0.4 + 0.4 * i
         for d in "LR":
-            kw = dict(resolution=0.025, radius=r, stepLength=0.05)
-            if n == 1:
-                kw |= dict(noOverlap=True)
+            if demo:
+                kw = dict(resolution=0.025, radius=r, stepLength=0.05)
+                if n == 1:
+                    kw |= dict(noOverlap=True)
+            else:
+                kw = dict()
             env = dict()
             yield f"simulation.Bug{n}{d}", env, kw
 
@@ -215,9 +218,9 @@ Combs = Iterable[tuple[str, str, str, dict[str, str]]]
 ProgOpts = dict(leave=False, dynamic_ncols=True, file=stdout)
 
 
-def runBugAlgorithms(*combs: Combs):
+def runBugAlgorithms(*combs: Combs, demo=False):
     # Bug algorithms
-    tasks = list(chain(*map(Bug(), *zip(*combs))))
+    tasks = list(chain(*map(Bug(demo), *zip(*combs))))
     progress = tqdm(total=len(tasks), desc="Bug Algorithms", **ProgOpts)
     with Pool(max(1, cpu_count())) as pool:
         for triplet, dt, meta in pool.imap_unordered(unpack_exec, tasks):
@@ -282,15 +285,17 @@ def runWaveFrontSync(*combs: Combs):
 if __name__ == "__main__":
     parser = ArgumentParser(prog="python3 -m batch")
     parser.add_argument("world", type=str, nargs=1)
-    parser.add_argument("modules", type=str, nargs="*")
+    parser.add_argument("--demo", action="store_true")
     args = parser.parse_args()
     world = str(args.world[0])
+    demo = bool(args.demo)
     # Generate world view
     Python("lib.world")(world, prefix="results/world", scale=4, **SLICE).wait()
     config = parse(stdin)
     SRC, DST = config["SRC"], config["DST"]
-    runBugAlgorithms(*combinations(world, SRC, DST, **KW, save=True))
-    exit(0)
+    runBugAlgorithms(*combinations(world, SRC, DST, **KW, save=True), demo=demo)
+    if demo:
+        exit(0)
     runRandomWalk(*combinations(world, SRC, DST, **KW))
     runWaveFrontPool(*combinations(world, SRC, DST, **KW, save=True))
     # Save meta
