@@ -4,6 +4,9 @@
 # ==============================================================================
 from argparse import ArgumentParser
 from .geometry import Point
+from sys import version_info
+
+major, minor, *_ = version_info
 
 
 def parse_point(s: str) -> Point[float]:
@@ -17,7 +20,7 @@ def tuple_of(t: type):
     return transform
 
 
-parser = ArgumentParser()
+parser = ArgumentParser(prog=f"python{major}.{minor} -m <module>")
 
 parser.add_argument("world", type=str, help="Path to the map file", nargs=1)
 # Destination folder
@@ -25,8 +28,12 @@ parser.add_argument(
     "--prefix", type=str, help="Destination file or folder", default=None
 )
 # Simulation parameters
-parser.add_argument("--src", type=parse_point, help="Source", default=None)
-parser.add_argument("--dst", type=parse_point, help="Destination", default=None)
+parser.add_argument(
+    "--src", type=parse_point, help="Simulation Starting Location", default=None
+)
+parser.add_argument(
+    "--dst", type=parse_point, help="Simulation Destination", default=None
+)
 # Simulation conditions
 parser.add_argument(
     "-t",
@@ -51,21 +58,28 @@ parser.add_argument(
 )
 # Visualization parameters
 parser.add_argument(
-    "-s", "--scale", type=float, help="DPI Scale for UI display", default=2.0
+    "-s",
+    "--scale",
+    type=float,
+    help="Scale of viewport, relative to internal occupancy grid",
+    default=2.0,
 )
 parser.add_argument(
-    "--dpi-scale", type=float, help="DPI Scale for UI display", default=1.0
+    "--dpi-scale",
+    type=float,
+    help="DPI Scale for UI elements (lines, markers, text)",
+    default=1.0,
 )
 parser.add_argument(
     "-v",
     "--visualize",
-    help="Visualize Simulation",
+    help="Enable visualization",
     default=False,
     action="store_true",
 )
 parser.add_argument(
     "--no-wait",
-    help="Do not wait for key stroke after simulation is complete",
+    help="Do not wait for key stroke after simulation is complete, effective only with the -v flag",
     default=False,
     action="store_true",
 )
@@ -77,7 +91,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--line-color",
-    help="Color of the trajectory line",
+    help='Color of the trajectory line, in "b,g,r" format',
     type=tuple_of(float),
     default=(0, 0, 255),
 )
@@ -91,7 +105,7 @@ parser.add_argument(
 parser.add_argument(
     "-S",
     "--slice",
-    help="Output Image Slice (x, y, w, h)",
+    help='Output Image Slice in "x,y,w,h" format',
     type=tuple_of(int),
     default=None,
 )
