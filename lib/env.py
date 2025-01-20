@@ -27,4 +27,5 @@ from os import environ
 if "SEED" in environ:
     from random import seed
 
-    seed(int(environ["SEED"]))
+    s = int(environ["SEED"])
+    seed(s)

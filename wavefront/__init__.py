@@ -237,13 +237,13 @@ class WaveFront:
                     break
         x = np.array(T)
         y = np.array(P)
-        print(f"# coverage = {y.sum():.4f}")
+        print(f"# coverage: {y.sum():.4f}")
         y /= y.sum()
         mean = np.sum(x * y)
-        print(f"# travel   = {mean:.4f}")
+        print(f"# travel  : {mean:.2f}")
         variance = np.sum((x - mean) ** 2 * y)
         std = np.sqrt(variance)
-        print(f"# std      = {std:.4f}")
+        print(f"# std     : {std:.2f}")
 
         wf.world.dpi_scale = max(wf.world.dpi_scale, 2.0)
         # u = U / float(n + 1)

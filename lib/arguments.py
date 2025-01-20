@@ -81,7 +81,7 @@ parser.add_argument(
 parser.add_argument(
     "-R",
     "--resolution",
-    help="World pixel resolution in meters",
+    help="World pixel resolution in meters (m/px)",
     type=float,
     default=None,
 )

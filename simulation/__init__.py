@@ -288,20 +288,20 @@ class Simulation:
                 if sim.max_travel is not None and travel > sim.max_travel:
                     raise Simulation.Abort("exceeded max travel distance")
             print(*p1, sim.heading, sep=", ")
-            print("# src    =", sim.src)
-            print("# dst    =", sim.dst)
-            print("# travel =", f"{travel:.2f}")
+            print("# src   :", sim.src)
+            print("# dst   :", sim.dst)
+            print("# travel:", f"{travel:.2f}")
         except KeyboardInterrupt:
             failure()
-            print("# abort  = user aborted")
+            print("# abort : user aborted")
         except Simulation.Abort as e:
             failure()
-            print("# abort  =", e.reason)
+            print("# abort :", e.reason)
         except Exception as e:
             import traceback
 
             failure()
-            print("# abort  = ", e)
+            print("# abort :", e)
             traceback.print_exception(e, file=sys.stderr)
 
         if trj_list is not None:
