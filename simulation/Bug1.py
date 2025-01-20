@@ -31,30 +31,24 @@ class Bug1(Simulation, WallFollowing):
 
     mode: Mode = Mode.MOVE_TO_DST
     wall_loop: list[Point] = []
+    smooth_dp: list[Point] = []
 
     @property
     def loop_closed(self):
         p1 = self.wall_loop[-1]
-        for p0 in self.wall_loop[:-5][:10]:
+        cnt = int(5 * self.world.radius / self.step_length)
+        cnt = max(cnt, 10)
+        for p0 in self.wall_loop[:-cnt][:cnt]:
             if (p0 - p1).norm < max(self.step_length * 2, self.world.radius):
                 return True
         return False
 
-    decay: float = 0.5
-    prev_dp: Point | None = None
     padding: Point = Point(0, 0, type=int)
     loop_enter_heading: float = 0.0
 
     @property
     def padding_offset(self):
         return self.world.line_width_meters * 4
-
-    def rolling(self, dp: Point) -> Point:
-        if self.prev_dp is None:
-            self.prev_dp = dp
-        else:
-            self.prev_dp = self.prev_dp * self.decay + dp * (1.0 - self.decay)
-        return self.prev_dp
 
     def pad_loop(self, dp: Point) -> Point:
         raise NotImplementedError
@@ -81,6 +75,14 @@ class Bug1(Simulation, WallFollowing):
                     if len(self.wall_loop) > 1:
                         self.mode = self.Mode.MOVE_TO_CLOSEST_POINT
                         if self.no_overlap:
+                            pts = self.wall_loop + [pos]
+                            sdp = [p1 - p0 for p0, p1 in zip(pts[1:], pts)]
+                            ps, pe = sdp[0], sdp[-1]
+                            sdp = [
+                                (p0 + p1 + p2) / 3
+                                for p0, p1, p2 in zip(sdp, sdp[1:], sdp[2:])
+                            ]
+                            self.smooth_dp = [ps, *sdp, pe]
                             self.padding = self.move(
                                 self.loop_enter_heading, -self.padding_offset
                             )
@@ -102,8 +104,8 @@ class Bug1(Simulation, WallFollowing):
                     with self.no_check:
                         if self.no_overlap:
                             p1 = self.wall_loop.pop(-1)
-                            dp = p1 - (pos - self.padding)
-                            self.padding = self.pad_loop(self.rolling(dp))
+                            dp = self.smooth_dp.pop(-1)
+                            self.padding = self.pad_loop(dp)
                             yield p1 - pos + self.padding
                         else:
                             yield self.wall_loop.pop(-1) - pos

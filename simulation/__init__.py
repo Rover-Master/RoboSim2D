@@ -301,11 +301,11 @@ class Simulation:
                     key = cv2.waitKey(1)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
-                print(*p0, sim.heading - 0.5 * pi, sep=",")
+                print(*p0, (p1 - p0).angle, sep=",")
                 p0 = p1
                 if sim.max_travel is not None and travel > sim.max_travel:
                     raise Simulation.Abort("exceeded max travel distance")
-            print(*p1, sim.heading, sep=", ")
+            print(*p1, (p1 - p0).angle, sep=", ")
             print("# src   :", sim.src)
             print("# dst   :", sim.dst)
             print("# travel:", f"{travel:.2f}")

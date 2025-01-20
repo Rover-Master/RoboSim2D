@@ -62,7 +62,7 @@ def aggregate(*runs: Path):
             id=run.stem,
             success="abort" not in t.meta,
             range=len(t),
-            stride=0.1,
+            stride=0.05,
             offset=offset,
             color=["red", "green", "blue"][int(run.stem[-2])],
             buffer=str(t),

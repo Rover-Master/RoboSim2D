@@ -161,7 +161,7 @@ def factory(f):
 @factory
 def Bug(*_):
     for i, n in enumerate([1, 2, 0]):
-        r = 0.2 + 0.2 * i
+        r = 0.4 + 0.4 * i
         for d in "LR":
             kw = dict(resolution=0.025, radius=r, stepLength=0.05)
             if n == 1:
@@ -290,6 +290,7 @@ if __name__ == "__main__":
     config = parse(stdin)
     SRC, DST = config["SRC"], config["DST"]
     runBugAlgorithms(*combinations(world, SRC, DST, **KW, save=True))
+    exit(0)
     runRandomWalk(*combinations(world, SRC, DST, **KW))
     runWaveFrontPool(*combinations(world, SRC, DST, **KW, save=True))
     # Save meta

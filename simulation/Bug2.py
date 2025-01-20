@@ -28,7 +28,7 @@ class Bug2(Simulation, WallFollowing):
     def mLineIntersect(self, pos: Point[float], dst: Point[float]):
         v1 = dst - pos
         r0, d0 = self.r0, self.d0
-        r1, d1 = v1.angle - 0.5 * np.pi, v1.norm
+        r1, d1 = v1.angle, v1.norm
         self.r0, self.d0 = r1, d1
         if None in (r0, d0):
             return
@@ -53,7 +53,7 @@ class Bug2(Simulation, WallFollowing):
         if self.n_steps == 0:
             self.src_pos = pos
         self.n_steps += 1
-        if self.n_steps > 3 and (pos - self.src_pos).norm <= self.step_length:
+        if self.n_steps > 3 and (pos - self.src_pos).norm <= 1 * self.step_length:
             raise Simulation.Abort("dead-loop")
         # Mode switch
         match self.mode:
@@ -67,8 +67,9 @@ class Bug2(Simulation, WallFollowing):
                 if intersect is not None:
                     self.mode = self.Mode.MOVE_TO_DST
                     yield intersect
-                else:
-                    yield self.move_along_wall
+                # If intersection is not found, continue moving along the wall
+                self.mode = self.Mode.MOVE_ALONG_WALL
+                yield self.move_along_wall
             case _:
                 # Should never reach here
                 raise RuntimeError(f"Invalid mode {self.mode}")
