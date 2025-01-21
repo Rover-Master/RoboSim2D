@@ -8,15 +8,9 @@ from math import pi, cos, sin, ceil
 from itertools import chain
 from contextlib import contextmanager, closing
 
-from lib.arguments import parser
-
-parser.add_argument(
-    "--step-length", type=float, help="Step length in meters", default=0.1
-)
-
 from lib.geometry import Point
-from lib.world import World
 from lib.util import repeat, dup, Retry
+from lib.arguments import auto_parse
 
 
 class Proposal:
@@ -37,7 +31,7 @@ class Proposal:
             p0, sim = self.p0, self.sim
             if isinstance(dp, Point):
                 p1 = p0 + dp
-                if (not sim.check) or sim.world.checkLine(p0, p1):
+                if (not sim.check) or sim.world.checkLine(p0, p1, sim.radius):
                     return p1
             else:
                 proposal = Proposal.construct(dp)
@@ -92,19 +86,12 @@ class Lazy(Proposal):
         return p1
 
 
-class Simulation:
+from lib.simulation import SimulationBase
+
+
+@auto_parse()
+class Simulation(SimulationBase):
     heading: float = 0.0
-
-    def __init__(self, **kwargs):
-        from lib.env import world, src_pos, dst_pos, args
-
-        self.step_length: float = args.step_length
-        self.world = world
-        self.src = src_pos
-        self.dst = dst_pos
-        self.max_travel = world.max_travel
-        self.__dict__.update(kwargs)
-
     check: bool = True
 
     @property
@@ -156,7 +143,7 @@ class Simulation:
         """
         Check if the simulation has reached a termination condition.
         """
-        return (pos - dst).norm < self.world.threshold
+        return (pos - dst).norm < self.threshold
 
     class Abort(Exception):
         def __init__(self, reason: str):
@@ -219,22 +206,22 @@ class Simulation:
         travel: float | None = None,
     ):
         name = self.__class__.__name__
-        world = self.world
+        vis = self.vis
         if bg is None:
-            bg = world.view
-        bg[fg >= 128] = world.line_color
-        world.draw_src(bg, world.pixel_pos(self.src))
-        world.draw_dst(bg, world.pixel_pos(self.dst))
+            bg = vis.view
+        bg[fg >= 128] = vis.line_color
+        vis.draw_src(bg, vis.pixel_pos(self.src))
+        vis.draw_dst(bg, vis.pixel_pos(self.dst))
         if pos is not None:
             cv2.circle(
                 bg,
-                world.pixel_pos(pos),
-                world.px(0.16),
+                vis.pixel_pos(pos),
+                vis.px(0.16),
                 (192, 0, 0),
                 cv2.FILLED,
             )
         if travel is not None:
-            world.caption(
+            vis.caption(
                 bg, f"Travel: {travel:.2f} m ({name})", fg=(0, 0, 0), bg=(255, 255, 255)
             )
         return bg
@@ -244,11 +231,12 @@ class Simulation:
         """
         Run the simulation
         """
+        vis = sim.vis
         name = sim.__class__.__name__
-        sim_img = sim.world.withPrefix(name, suffix="png")
-        trj_list = sim.world.withPrefix(name, suffix="txt")
-        trj_img = sim.world.withPrefix(f"{name}-trj", suffix="png")
-        overlay_img = sim.world.withPrefix(f"{name}-overlay", suffix="png")
+        sim_img = sim.out(name, suffix="png")
+        trj_list = sim.out(name, suffix="txt")
+        trj_img = sim.out(f"{name}-trj", suffix="png")
+        overlay_img = sim.out(f"{name}-overlay", suffix="png")
         if trj_list is not None:
             trj_list_file = open(trj_list, "w")
             print = dup(trj_list_file)
@@ -257,47 +245,48 @@ class Simulation:
 
         travel: float = 0.0
         p0 = sim.src
+        p1 = sim.src
 
-        trj = np.zeros(sim.world.grayscale.shape, dtype=np.uint8)
+        trj = np.zeros(vis.grayscale.shape, dtype=np.uint8)
 
         def line(a: Point[float], b: Point[float]):
             cv2.line(
                 trj,
-                sim.world.pixel_pos(a),
-                sim.world.pixel_pos(b),
+                vis.pixel_pos(a),
+                vis.pixel_pos(b),
                 255,
-                sim.world.line_width,
+                vis.line_width,
                 cv2.LINE_AA,
             )
 
         def failure():
             cv2.drawMarker(
                 trj,
-                sim.world.pixel_pos(p1),
+                vis.pixel_pos(p1),
                 0,
                 cv2.MARKER_TILTED_CROSS,
-                sim.world.px(0.3),
-                sim.world.line_width * 3,
+                vis.px(0.3),
+                vis.line_width * 3,
             )
             cv2.drawMarker(
                 trj,
-                sim.world.pixel_pos(p1),
+                vis.pixel_pos(p1),
                 255,
                 cv2.MARKER_TILTED_CROSS,
-                sim.world.px(0.3),
-                sim.world.line_width,
+                vis.px(0.3),
+                vis.line_width,
             )
 
-        if sim.world.visualize:
-            bg = sim.world.view
-            sim.world.show(sim.visualize(p0, trj, travel=0.0))
+        if vis.visualize:
+            bg = vis.view
+            vis.show(sim.visualize(p0, trj, travel=0.0))
 
         try:
             for p1 in sim:
                 travel += (p1 - p0).norm
                 line(p0, p1)
-                if sim.world.visualize:
-                    sim.world.show(sim.visualize(p1, trj, travel=travel))
+                if vis.visualize:
+                    vis.show(sim.visualize(p1, trj, travel=travel))
                     key = cv2.waitKey(1)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
@@ -325,9 +314,9 @@ class Simulation:
         if trj_list is not None:
             trj_list_file.close()
         if trj_img is not None:
-            sim.world.saveImg(trj_img, trj)
+            vis.saveImg(trj_img, trj)
         if sim_img is not None:
-            sim.world.saveImg(sim_img, sim.visualize(None, trj, travel=travel))
+            vis.saveImg(sim_img, sim.visualize(None, trj, travel=travel))
         if overlay_img is not None:
             blank = np.zeros_like(trj)
             overlay = sim.visualize(
@@ -335,8 +324,8 @@ class Simulation:
             )
             alpha = (np.max(overlay, axis=-1, keepdims=True) > 0).astype(np.uint8) * 255
             img = np.concatenate([overlay, alpha], axis=-1)
-            sim.world.saveImg(overlay_img, img)
-        if sim.world.visualize and not sim.world.no_wait:
+            vis.saveImg(overlay_img, img)
+        if vis.visualize and not vis.no_wait:
             try:
                 for key in repeat(cv2.waitKey, 10):
                     if key > 0:

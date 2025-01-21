@@ -3,19 +3,18 @@
 # License: MIT
 # ==============================================================================
 import cv2, numpy as np
-from lib.env import world
 from . import WaveFront
 
+wf = WaveFront()
 
 def scale(f: np.ndarray):
-    s = world.dpi_scale
+    s = wf.vis.dpi_scale
     return cv2.resize(f / f.max(), None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
 
 
 def render(v: int | None = None):
     if v is not None:
-        world.radius = v / 50.0
-    wf = WaveFront()
+        wf.radius = v / 50.0
     view = wf.view.astype(wf.dtype) / 255.0
     view = wf.render(view, wf.source_field, [1.0, 0.0, 0.0])
     view = wf.render(view, wf.drain_field, [0.0, 0.8, 0.0])

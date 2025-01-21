@@ -2,10 +2,13 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc), Adnan Abdullah
 # License: MIT
 # ==============================================================================
-from lib.arguments import parser
+from lib.arguments import register_arguments, Argument
 
-parser.add_argument(
-    "--no-overlap", action="store_true", help="Add padding when moving back the loop"
+register_arguments(
+    no_overlap=Argument(
+        action="store_true",
+        help="Add padding when moving back the loop",
+    )
 )
 
 from . import Simulation, WallFollowing
@@ -18,11 +21,9 @@ from lib.geometry import Point
 
 class Bug1(Simulation, WallFollowing):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        from lib.env import args
-
-        self.no_overlap: bool = args.no_overlap
+    @property
+    def no_overlap(self):
+        return self.world.meta.get("no_overlap", False)
 
     class Mode(Enum):
         MOVE_TO_DST = 0
@@ -36,10 +37,10 @@ class Bug1(Simulation, WallFollowing):
     @property
     def loop_closed(self):
         p1 = self.wall_loop[-1]
-        cnt = int(5 * self.world.radius / self.step_length)
+        cnt = int(5 * self.radius / self.step_length)
         cnt = max(cnt, 10)
         for p0 in self.wall_loop[:-cnt][:cnt]:
-            if (p0 - p1).norm < max(self.step_length * 2, self.world.radius):
+            if (p0 - p1).norm < max(self.step_length * 2, self.radius):
                 return True
         return False
 
@@ -48,7 +49,7 @@ class Bug1(Simulation, WallFollowing):
 
     @property
     def padding_offset(self):
-        return self.world.line_width_meters * 3
+        return self.vis.line_width_meters * 3
 
     def pad_loop(self, dp: Point) -> Point:
         raise NotImplementedError

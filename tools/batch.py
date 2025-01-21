@@ -290,7 +290,7 @@ if __name__ == "__main__":
     world = str(args.world[0])
     demo = bool(args.demo)
     # Generate world view
-    Python("lib.world")(world, prefix="results/world", scale=4, **SLICE).wait()
+    Python("tools.slice")(world, prefix="results/world", scale=4, **SLICE).wait()
     config = parse(stdin)
     SRC, DST = config["SRC"], config["DST"]
     runBugAlgorithms(*combinations(world, SRC, DST, **KW, save=True), demo=demo)

@@ -6,27 +6,22 @@ import builtins, numpy as np, cv2
 from lib.geometry import Point
 from math import ceil
 from lib.util import dup, sliceOffsets
+from lib.simulation import SimulationBase
+from lib.arguments import auto_parse
 
 
-class WaveFront:
+@auto_parse()
+class WaveFront(SimulationBase):
     dtype = np.float32
-    # Wave propagation speed in meters per second
-    velocity: float = 1.0
-    # Time step in seconds
-    time_step: float = 0.01
     # Termination threshold - the remaining probability
     vanish_threshold: float = 0.0001
 
-    def __init__(self, **kwargs):
-        from lib.env import world, src_pos, dst_pos
-
-        self.world = world
-        self.src = src_pos
-        self.dst = dst_pos
-        self.__dict__.update(kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step_length = self.world.res / 10.0
         # background
-        o = world.occupancy
-        r = ceil(world.radius / world.res)
+        o = self.world.occupancy
+        r = ceil(self.radius / self.world.res)
         # kernel
         k = np.zeros([2 * r + 1] * 2, dtype=np.uint8)
         cv2.circle(k, (r, r), r, 255, -1, cv2.FILLED)
@@ -44,37 +39,37 @@ class WaveFront:
         # `field * base` filters out probability distributions in obstacles
         self.base = 1.0 - m.astype(self.dtype)
         # Discrete cartesian coordinates (per-cell)
-        Y, X = np.mgrid[:h, :w].astype(self.dtype) * world.res
-        ox, oy = world.world_pos(Point(0, 0))
+        Y, X = np.mgrid[:h, :w].astype(self.dtype) * self.world.res
+        ox, oy = self.world.world_pos(Point(0, 0))
         self.X = +X + ox
         self.Y = -Y + oy
         # source_field:
         #   A gaussian distribution around the source.
         #   It's sigma equals the radius of the robot.
-        self.source_field = self.norm(self.gaussian(src_pos, world.radius / 2))
+        self.source_field = self.norm(self.gaussian(self.src, self.radius / 2))
         # drain_field:
         #   An inverse gaussian distribution around the destination
         #   It's sigma equals the threshold distance.
-        self.drain_field = self.gaussian(dst_pos, world.threshold / 2)
+        self.drain_field = self.gaussian(self.dst, self.threshold / 2)
 
     @property
     def mask(self):
         # rendering properties and assets
-        r = self.world.dpi_scale
+        r = self.vis.scale
         return (
             cv2.resize(self.base, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
             > 0.5
         )
 
     @property
-    def view(self):
+    def view(self) -> np.ndarray:
         diff = (self.base <= 0.5) ^ self.world.occupancy
-        r = self.world.dpi_scale
+        r = self.vis.scale
         diff = (
             cv2.resize(diff * 155, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
             >= 128
         )
-        view = self.world.view
+        view = self.vis.view
         view[diff, :] = 192
         return view
 
@@ -96,7 +91,7 @@ class WaveFront:
         # Requires float array of range [0.0, 1.0]
         if bg.max() > 1.0:
             raise ValueError("Background must be a float array of range [0.0, 1.0]")
-        s = self.world.dpi_scale
+        s = self.vis.scale
         if invert:
             field = 1.0 - field
         field = np.clip(field, 0.0, 1.0)
@@ -114,7 +109,7 @@ class WaveFront:
         invert: bool = False,
     ) -> np.ndarray:
         # Requires float array of range [0.0, 1.0]
-        s = self.world.dpi_scale
+        s = self.vis.scale
         if invert:
             field = 1.0 - field
         field = np.clip(field, 0.0, 1.0)
@@ -180,9 +175,9 @@ class WaveFront:
     @staticmethod
     def run(wf: "WaveFront"):
         name = wf.__class__.__name__
-        out_list = wf.world.withPrefix(name, suffix="txt")
-        out_img = wf.world.withPrefix(name, suffix="png")
-        out_fig = wf.world.withPrefix(name, suffix="pdf")
+        out_list = wf.out(name, suffix="txt")
+        out_img = wf.out(name, suffix="png")
+        out_fig = wf.out(name, suffix="pdf")
         if out_list is not None:
             trj_list_file = open(out_list, "w")
             print = dup(trj_list_file)
@@ -193,9 +188,9 @@ class WaveFront:
         P = list[float]()
         T = list[float]()
         t = 0.0
-        dt = wf.velocity * wf.time_step
+        dt = wf.step_length
 
-        if wf.world.visualize:
+        if wf.vis.visualize:
             import matplotlib.pyplot as plt
 
             fig, ax = plt.subplots()
@@ -210,11 +205,11 @@ class WaveFront:
                 dp_max = max(dp_max, dp)
                 m = wf.render(bg, u / u.max(), color=[0.0, 0.0, 1.0])
                 m = (m * 255.0).astype(np.uint8)
-                wf.world.draw_src(m, wf.world.pixel_pos(wf.src))
-                wf.world.draw_dst(m, wf.world.pixel_pos(wf.dst))
+                wf.vis.draw_src(m, wf.vis.pixel_pos(wf.src))
+                wf.vis.draw_dst(m, wf.vis.pixel_pos(wf.dst))
                 caption = f"Travel {t:.2f}m | Progress {(1.0 - p) * 100.0:.2f}%"
-                wf.world.caption(m, caption, fg=(0, 0, 0), bg=(255, 255, 255))
-                wf.world.show(m)
+                wf.vis.caption(m, caption, fg=(0, 0, 0), bg=(255, 255, 255))
+                wf.vis.show(m)
                 # T-P Plot
                 ax.set_xlim(0, max(t, 1.0))
                 ax.set_ylim(0, max(dp_max, 1e-10))
@@ -230,7 +225,7 @@ class WaveFront:
             T.append(t)
             t += dt
             # Visualization
-            if wf.world.visualize and t - last_vis_t > 0.1:
+            if wf.vis.visualize and t - last_vis_t > 0.1:
                 last_vis_t = t
                 visualize(u, p, dp)
                 if cv2.waitKey(1) > 0:
@@ -244,11 +239,9 @@ class WaveFront:
         variance = np.sum((x - mean) ** 2 * y)
         std = np.sqrt(variance)
         print(f"# std     : {std:.2f}")
-
-        wf.world.dpi_scale = max(wf.world.dpi_scale, 2.0)
         # u = U / float(n + 1)
         amp: float = 1.0
-        bg = wf.view.astype(wf.dtype) / 255.0
+        bg = wf.vis.view.astype(wf.dtype) / 255.0
 
         def vis():
             u = U * amp / U.max()
@@ -256,18 +249,18 @@ class WaveFront:
             v[wf.mask] = wf.heatmap(u)[wf.mask]
             v = (v * 255.0).astype(np.uint8)
             caption = f"Expected Travel: {mean:.2f} +/- {std:.2f}m"
-            wf.world.draw_src(v, wf.world.pixel_pos(wf.src))
-            wf.world.draw_dst(v, wf.world.pixel_pos(wf.dst))
-            wf.world.caption(v, caption, fg=(0, 0, 0), bg=(255, 255, 255))
+            wf.vis.draw_src(v, wf.vis.pixel_pos(wf.src))
+            wf.vis.draw_dst(v, wf.vis.pixel_pos(wf.dst))
+            wf.vis.caption(v, caption, fg=(0, 0, 0), bg=(255, 255, 255))
             return v
 
         def renderVis(_amp: float | None = None):
             nonlocal amp
             if _amp is not None and _amp >= 1.0:
                 amp = _amp
-            return wf.world.show(vis(), "probability distribution")
+            return wf.vis.show(vis(), "probability distribution")
 
-        if wf.world.visualize and not wf.world.no_wait:
+        if wf.vis.visualize and not wf.vis.no_wait:
             if t != last_vis_t:
                 visualize(u, p, dp)
                 handle = renderVis()
@@ -282,7 +275,7 @@ class WaveFront:
                 pass
 
         if out_img is not None:
-            wf.world.saveImg(out_img, vis())
+            wf.vis.saveImg(out_img, vis())
 
         if out_fig is not None:
 

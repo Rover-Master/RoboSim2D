@@ -14,7 +14,7 @@ class WaveFront(WF):
         super().__init__(**kwargs)
         # Cache for performance
         # (v * dt) ^ 2 / (dx ^ 2)
-        self.k = (self.velocity * self.time_step) ** 2 / (self.world.res**2)
+        self.k = self.step_length**2 / (self.world.res**2)
         # obstacle mask
         self.f = self.base > 0.5
 
@@ -24,8 +24,7 @@ class WaveFront(WF):
         for i, (s0, s1) in enumerate(Deltas):
             L[i][*s0][self.f[*s1]] = u0[*s1][self.f[*s1]]
         l = np.mean(L, axis=0) - u0
-        u1: np.ndarray = u0 + du + self.k * l
-        return u1
+        return u0 + du + self.k * l
 
 
 if __name__ == "__main__":

@@ -2,11 +2,78 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
-from typing import Iterable
+# This module is a termination point. No imports should be made to other modules
+# ==============================================================================
+import sys
+from functools import wraps
+from typing import Iterable, Generic, TypeVar, Callable
 from math import pi, fmod
+from inspect import signature
+
+T = TypeVar("T")
 
 
-def repeat(action: callable, *args, **kwargs):
+def own_attrs(cls: T) -> T:
+    slots = signature(cls).parameters
+    init = cls.__init__
+
+    @wraps(init)
+    def init_filter(self, *args, **kwargs):
+        return init(self, *args, **{k: v for k, v in kwargs.items() if k in slots})
+
+    cls.__init__ = init_filter
+    return cls
+
+
+def reflect(el: object):
+    if isinstance(el, type):
+        return el.__name__
+    return repr(el)
+
+
+def trace(fn: callable, name: str | None = None, file=sys.stderr):
+    if name is None:
+        name = fn.__name__
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        print(name, end="(\n  ", file=file)
+        print(
+            *map(reflect, args),
+            *(f"{k}={reflect(v)}" for k, v in kwargs.items()),
+            sep=",\n  ",
+            end="\n)\n",
+            file=file,
+            flush=True,
+        )
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def strip_parentheses(s: str) -> str:
+    while True:
+        for l, r in ("()", "[]", "{}", "<>"):
+            s = s.strip()
+            if s.startswith(l) and s.endswith(r):
+                s = s[1:-1]
+        else:
+            break
+    return s.strip()
+
+
+class tuple_of(Generic[T]):
+    def __init__(self, t: Callable[[str], T]):
+        self.type = t
+
+    def __call__(self, s: str) -> tuple[T]:
+        return tuple(map(self.type, strip_parentheses(s).split(",")))
+
+    def __repr__(self):
+        return f"tuple_of({self.type.__name__})"
+
+
+def repeat(action: Callable, *args, **kwargs):
     while True:
         yield action(*args, **kwargs)
 
