@@ -48,7 +48,7 @@ class Bug1(Simulation, WallFollowing):
 
     @property
     def padding_offset(self):
-        return self.world.line_width_meters * 4
+        return self.world.line_width_meters * 3
 
     def pad_loop(self, dp: Point) -> Point:
         raise NotImplementedError
@@ -57,6 +57,7 @@ class Bug1(Simulation, WallFollowing):
         # Mode switch
         match self.mode:
             case self.Mode.MOVE_TO_DST:
+                self.check = True
                 # The target direction
                 r1 = (dst - pos).angle
                 yield self.move(r1)
@@ -67,6 +68,7 @@ class Bug1(Simulation, WallFollowing):
                 # Left turn not viable, try right turn
                 yield self.hit_wall
             case self.Mode.MOVE_ALONG_WALL:
+                self.check = True
                 # Check for loop closure
                 if self.loop_closed:
                     distances = [(dst - p).norm for p in self.wall_loop]
@@ -95,6 +97,7 @@ class Bug1(Simulation, WallFollowing):
                     self.wall_loop.append(pos)
                     yield self.move_along_wall
             case self.Mode.MOVE_TO_CLOSEST_POINT:
+                self.check = False
                 if len(self.wall_loop) == 0:
                     self.mode = self.Mode.MOVE_TO_DST
                     self.padding = Point(0, 0, type=int)

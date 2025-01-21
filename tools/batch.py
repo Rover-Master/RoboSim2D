@@ -20,7 +20,7 @@ WATCH_LIST = [
     # ("SW", "NE", "Bug1L"),
 ]
 
-SLICE = {"slice": "19,7,320,320"}
+SLICE = {"slice": "19,7,320,360"}
 
 
 def camel2dash(s: str) -> str:
@@ -161,9 +161,9 @@ def factory(f):
 @factory
 def Bug(demo: bool, *_):
     for i, n in enumerate([1, 2, 0]):
-        r = 0.4 + 0.4 * i
         for d in "LR":
             if demo:
+                r = 0.25 + 0.2 * i
                 kw = dict(resolution=0.025, radius=r, stepLength=0.05)
                 if n == 1:
                     kw |= dict(noOverlap=True)

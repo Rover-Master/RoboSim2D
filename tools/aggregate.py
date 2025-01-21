@@ -52,7 +52,7 @@ offset = dict(x=0, y=0, r=0)
 
 def aggregate(*runs: Path):
     trajectories = {}
-    for run in runs:
+    for run in reversed(runs):
         try:
             t = Trajectory(run.open("rt"))
         except Exception as e:
