@@ -53,11 +53,16 @@ class Bug2(Simulation, WallFollowing):
         if self.n_steps == 0:
             self.src_pos = pos
         self.n_steps += 1
-        if self.n_steps > 3 and (pos - self.src_pos).norm <= 1 * self.step_length:
-            raise Simulation.Abort("dead-loop")
         # Mode switch
         match self.mode:
             case self.Mode.MOVE_TO_DST:
+                r_src = (self.src - pos).angle
+                if (
+                    self.n_steps > 10
+                    and abs(angDiff(r_src, self.r)) < pi / 2
+                    and (pos - self.src_pos).norm <= 2 * self.step_length
+                ):
+                    raise Simulation.Abort("dead-loop")
                 yield self.move(self.r)
                 self.mode = self.Mode.MOVE_ALONG_WALL
                 yield self.hit_wall
@@ -69,7 +74,7 @@ class Bug2(Simulation, WallFollowing):
                     yield intersect
                 # If intersection is not found, continue moving along the wall
                 self.mode = self.Mode.MOVE_ALONG_WALL
-                yield self.move_along_wall
+                yield self.follow_wall
             case _:
                 # Should never reach here
                 raise RuntimeError(f"Invalid mode {self.mode}")
@@ -79,13 +84,13 @@ class Bug2(Simulation, WallFollowing):
 
         world = self.world
         if bg is None:
-            bg = world.view
+            bg = self.vis.view
         cv2.line(
             bg,
             world.pixel_pos(self.src),
             world.pixel_pos(self.dst),
             (128, 128, 128),
-            world.line_width,
+            self.vis.line_width,
             cv2.LINE_AA,
         )
         return super().visualize(pos, fg, bg, **kwargs)

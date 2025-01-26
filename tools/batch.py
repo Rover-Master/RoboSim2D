@@ -6,7 +6,8 @@
 from os import cpu_count
 from sys import stdin, stdout, stderr, executable
 from yaml import safe_load as parse
-from typing import Iterable, Callable
+from typing import Iterable, Callable, Any
+from functools import wraps
 from itertools import chain
 from pathlib import Path
 from argparse import ArgumentParser
@@ -15,7 +16,7 @@ from subprocess import Popen, PIPE
 from time import time
 from tqdm import tqdm
 
-WATCH_LIST = [
+WATCH_LIST: list[tuple[str, str, str]] = [
     # ("SW", "C", "Bug1L"),
     # ("SW", "NE", "Bug1L"),
 ]
@@ -44,12 +45,12 @@ class Python:
         self.env = env
 
     def __call__(self, *args, **kwargs):
-        args = executable, "-m", self.module, *args, *kw2cmdline(**kwargs)
-        print(*args, file=stderr)
-        return Popen(args, stdout=PIPE, env=self.env)
+        args = "-m", self.module, *args, *kw2cmdline(**kwargs)
+        print(Path(executable).name, *args, file=stderr)
+        return Popen((executable,) + args, stdout=PIPE, env=self.env)
 
 
-def parse_outputs(stream: Iterable[bytes]) -> dict[str, str]:
+def parse_outputs(stream: Iterable[bytes]) -> dict:
     from yaml import safe_load
 
     data = []
@@ -63,7 +64,7 @@ def parse_outputs(stream: Iterable[bytes]) -> dict[str, str]:
     return safe_load("\n".join(data))
 
 
-def format_message(desc: tuple[str, str, str], dt: float, meta: dict[str, str]) -> str:
+def format_message(desc: tuple[str, str, str], dt: float, meta: dict) -> str:
     src, dst, module = desc
     msg = [
         f"{src.rjust(2)}-{dst.ljust(2)}",
@@ -95,8 +96,7 @@ def exec(
     src: str,
     dst: str,
     module: str,
-    env: dict[str, str],
-    kw: dict[str, str],
+    kw: dict,
     filter: Callable | None = None,
     *filter_args,
 ):
@@ -105,7 +105,7 @@ def exec(
     if triplet in WATCH_LIST:
         args += ["-v"]
     t0 = time()
-    proc = Python(module, **env)(world, *args, **kw, **SLICE)
+    proc = Python(module)(world, *args, **kw, **SLICE)
     if filter:
         output = filter(proc.stdout, *filter_args)
     else:
@@ -128,7 +128,7 @@ def combinations(
     SRC: PList,
     DST: PList,
     save: bool = False,
-    **kw: dict[str, str],
+    **kw: dict[str, Any],
 ):
     if SRC is None or DST is None:
         raise ValueError("Missing SRC or DST in batch configuration")
@@ -143,51 +143,56 @@ def combinations(
                 dst=",".join(map(str, p1)),
             )
             if save:
-                local_kw["prefix"] = f"results/{src}-{dst}/"
+                local_kw = dict(prefix=f"results/{src}-{dst}/", **local_kw)
             yield world, src, dst, local_kw
 
 
 def factory(f):
+    @wraps(f)
     def outer(*args, **kwargs):
-        def inner(world: str, src: str, dst: str, kw: dict[str, str]):
+
+        def inner(world: str, src: str, dst: str, kw: dict):
             for module, env, _kw, *extras in f(*args, src, dst, **kwargs):
                 yield world, src, dst, module, env, {**kw, **_kw}, *extras
 
+        inner.__name__ = f.__name__
         return inner
 
     return outer
 
 
 @factory
-def Bug(demo: bool, *_):
-    for i, n in enumerate([1, 2, 0]):
+def Bug(*_):
+    for n in (1, 2, 0):
         for d in "LR":
-            if demo:
-                r = 0.25 + 0.2 * i
-                kw = dict(resolution=0.025, radius=r, stepLength=0.05)
-                if n == 1:
-                    kw |= dict(noOverlap=True)
-            else:
-                kw = dict()
+            kw = dict(radius=0.25)
             env = dict()
-            yield f"simulation.Bug{n}{d}", env, kw
+            yield f"simulation.Bug{n}{d}", kw
 
 
 @factory
-def RandomWalk(N: int = 100, *_):
+def RandomWalk(N: int = 1000, *_):
     for n in range(N):
-        env = dict(SEED=str(n))
-        kw = dict()
-        yield f"simulation.RandomWalk", env, kw
+        kw = dict(radius=0.25, seed=n)
+        yield f"simulation.RandomWalk", kw
+
+
+@factory
+def WallBounce(N: int = 360, *_):
+    from math import pi
+    from numpy import linspace
+
+    for hdg in linspace(0, 2 * pi, N, endpoint=False):
+        kw = dict(radius=0.25, heading=hdg)
+        yield f"simulation.WallBounce", kw
 
 
 @factory
 def WaveFront(queue, src: str, dst: str, *_):
-    env = dict()
-    kw = dict()
+    kw = dict(radius=0.25)
     filter = WaveFrontFilter
     desc = f"{src.rjust(2)}-{dst.ljust(2)}"
-    yield f"wavefront.WaveFront", env, kw, filter, desc, queue
+    yield f"wavefront.WaveFront", kw, filter, desc, queue
 
 
 def WaveFrontFilter(lines: Iterable[bytes], desc: str, queue=None):
@@ -211,18 +216,18 @@ def WaveFrontFilter(lines: Iterable[bytes], desc: str, queue=None):
         queue.put(slot)
 
 
-KW = dict(radius=0.25, resolution=0.025, scale=2.0)
-META = dict[str, dict[str, str]]()
+KW = dict(radius=0.255, resolution=0.025, scale=2.0)
+META = dict[str, dict]()
 
-Combs = Iterable[tuple[str, str, str, dict[str, str]]]
+Combs = Iterable[tuple[str, str, str, dict]]
 ProgOpts = dict(leave=False, dynamic_ncols=True, file=stdout)
 
 
-def runBugAlgorithms(*combs: Combs, demo=False):
+def runBugAlgorithms(combs: Combs):
     # Bug algorithms
-    tasks = list(chain(*map(Bug(demo), *zip(*combs))))
+    tasks = list(chain(*map(Bug(), *zip(*combs))))
     progress = tqdm(total=len(tasks), desc="Bug Algorithms", **ProgOpts)
-    with Pool(max(1, cpu_count())) as pool:
+    with Pool(max(1, cpu_count() or 1)) as pool:
         for triplet, dt, meta in pool.imap_unordered(unpack_exec, tasks):
             META["-".join(triplet)] = meta
             progress.write(format_message(triplet, dt, meta))
@@ -230,34 +235,42 @@ def runBugAlgorithms(*combs: Combs, demo=False):
     progress.clear()
 
 
-def runRandomWalk(*combs: Combs):
+def runBatchSampler(combs: Combs, factory: "RandomWalk | WallBounce"):
     # Random Walk algorithms
-    prog1 = tqdm(combs, desc="RandomWalk", position=0, **ProgOpts)
+    module = factory.__name__
+    prog1 = tqdm(combs, desc=module, position=0, **ProgOpts)
     for world, src, dst, kw in prog1:
-        tasks = list(RandomWalk(100)(world, src, dst, kw))
+        tasks = list(factory(world, src, dst, kw))
         desc = f"{src.rjust(2)}-{dst.ljust(2)}".rjust(10)
         prog2 = tqdm(total=len(tasks), desc=desc, position=1, **ProgOpts)
-        with Pool(max(1, cpu_count())) as pool:
+        with Pool(max(1, cpu_count() or 1)) as pool:
             t = 0.0
-            D = list[float]()
-            n = 0
+            data = list[float]()
             for _, dt, meta in pool.imap_unordered(unpack_exec, tasks):
-                n += 1
                 t += dt
-                if "travel" in meta:
-                    D.append(float(meta["travel"]))
+                if "travel" in meta and "abort" not in meta:
+                    data.append(float(meta["travel"]))
+                else:
+                    data.append(None)
                 prog2.update(1)
-            triplet = src, dst, "RandomWalk"
+            with open(f"results/{src}-{dst}/{module}.list", "w") as f:
+                for d in data:
+                    if d is not None:
+                        f.write(f"{d:.4f}\n")
+                    else:
+                        f.write("FAIL\n")
+            triplet = src, dst, module
+            D = [d for d in data if d is not None]
             mean = sum(D) / len(D)
             std = sum((x - mean) ** 2 for x in D) ** 0.5 / len(D)
-            meta = dict(travel=mean, std=std, success_rate=len(D) / n)
+            meta = dict(travel=mean, std=std, success_rate=len(D) / len(data))
             META["-".join(triplet)] = meta
             prog1.write(format_message(triplet, t, meta))
 
 
-def runWaveFrontPool(*combs: Combs):
+def runWaveFrontPool(combs: Combs):
     # WaveFront algorithms
-    slots = max(1, cpu_count() // 4)
+    slots = max(1, (cpu_count() or 1) // 4)
     queue = Manager().Queue()
     tasks = list(chain(*map(WaveFront(queue), *zip(*combs))))
     for n in range(slots):
@@ -271,7 +284,7 @@ def runWaveFrontPool(*combs: Combs):
     progress.clear()
 
 
-def runWaveFrontSync(*combs: Combs):
+def runWaveFrontSync(combs: Combs):
     # WaveFront algorithms
     tasks = list(chain(*map(WaveFront(None), *zip(*combs))))
     progress = tqdm(total=len(tasks), desc="WaveFront", position=0, **ProgOpts)
@@ -293,11 +306,12 @@ if __name__ == "__main__":
     Python("tools.slice")(world, prefix="results/world", scale=4, **SLICE).wait()
     config = parse(stdin)
     SRC, DST = config["SRC"], config["DST"]
-    runBugAlgorithms(*combinations(world, SRC, DST, **KW, save=True), demo=demo)
+    runBugAlgorithms(combinations(world, SRC, DST, **KW, save=True))
     if demo:
         exit(0)
-    runRandomWalk(*combinations(world, SRC, DST, **KW))
-    runWaveFrontPool(*combinations(world, SRC, DST, **KW, save=True))
+    runBatchSampler(combinations(world, SRC, DST, **KW), RandomWalk())
+    runBatchSampler(combinations(world, SRC, DST, **KW), WallBounce())
+    runWaveFrontSync(combinations(world, SRC, DST, **KW, save=True))
     # Save meta
     meta_path = Path("results/meta.yaml")
     with meta_path.open("w") as f:

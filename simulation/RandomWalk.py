@@ -2,14 +2,25 @@
 # Author : Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
+from lib.arguments import register_arguments, Argument
+
+register_arguments(
+    seed=Argument(type=float, required=False, help="Initial random seed.")
+)
+
 from math import pi
-from random import random
+from random import Random
 from . import Simulation
-from lib.util import repeat, limited
+from lib.util import repeat
 
 
 class RandomWalk(Simulation):
-    heading: float = random() * 2 * pi
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        seed = self.world.meta.get("seed", None)
+        self.random = Random(seed).random
+        self.heading = self.random() * 2 * pi
 
     def step(self, pos, dst):
         yield [
@@ -17,7 +28,7 @@ class RandomWalk(Simulation):
             self.move(self.heading),
             # Original heading no longer viable,
             # try new random headings until a viable one is found
-            map(lambda r: self.move(r * 2 * pi), limited(repeat(random), 100)),
+            map(lambda r: self.move(r * 2 * pi), repeat(self.random)),
         ]
 
 

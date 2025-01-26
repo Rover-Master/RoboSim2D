@@ -32,12 +32,12 @@ register_arguments(
     view_scale=Argument(
         opt_name="scale",
         type=float,
-        default=2.0,
+        required=False,
         help="Scale of viewport, relative to internal occupancy grid",
     ),
     dpi_scale=Argument(
         type=float,
-        default=1.0,
+        required=False,
         help="DPI Scale for UI elements (lines, markers, text), does not affect output size",
     ),
     visualize=Argument(
@@ -52,23 +52,23 @@ register_arguments(
     line_width_meters=Argument(
         opt_name="line_width",
         type=float,
-        default=0.05,
+        required=False,
         help="Line width for visualization in meters",
     ),
     line_color=Argument(
         type=tuple_of(float),
-        default=(0, 0, 255),
+        required=False,
         help="Color of the trajectory line (b,g,r)",
     ),
     raw_slice=Argument(
         opt_name="slice",
         type=tuple_of(int),
-        default=None,
+        required=False,
         help="Output Image Slice in (x,y,w,h)",
     ),
     font_family=Argument(
         type=FontFamily.id,
-        default=FontFamily.DUPLEX.value,
+        required=False,
         help="Font family for text rendering",
     ),
 )
@@ -80,25 +80,25 @@ import cv2, numpy as np
 from dataclasses import dataclass
 from pathlib import Path
 
-from .util import own_attrs
+from .util import ownAttributes
 from .geometry import Point
 from .world import World
 
 
-@own_attrs
+@ownAttributes
 @dataclass(frozen=False)
 class Visualization:
     world: World
-    debug: bool
+    debug: bool = False
 
-    view_scale: float
-    dpi_scale: float
-    visualize: bool
-    no_wait: bool
-    line_width_meters: float
-    line_color: tuple[float, float, float]
-    raw_slice: tuple[int, int, int, int] | None
-    font_family: int
+    view_scale: float = 2.0
+    dpi_scale: float = 2.0
+    visualize: bool = False
+    no_wait: bool = False
+    line_width_meters: float = 0.05
+    line_color: tuple[float, float, float] = (0, 0, 255)
+    raw_slice: tuple[int, int, int, int] | None = None
+    font_family: int = FontFamily.DUPLEX.value
 
     @property
     def scale(self):

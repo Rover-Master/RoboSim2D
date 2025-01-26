@@ -74,20 +74,18 @@ def retrieve_arguments(kwargs: dict, /, **kw: Argument):
     dst = {}
     for k, arg in kw.items():
         val = arg.retrieve(kwargs, k)
-        if val is not ...:
+        if val is not None:
             dst[k] = val
     return dst
 
 
 # No arguments shall be registered once parse() is called
 def parse():
-    from . import env as __unused__  # Random seed
     from .world import World
 
     # Debug flag always comes last
     register_arguments(
         debug=Argument(
-            default=False,
             action="store_true",
             help="Toggle debug tools",
         ),

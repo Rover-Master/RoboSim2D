@@ -7,7 +7,7 @@ from .arguments import register_arguments, Argument
 register_arguments(
     prefix=Argument(
         type=str,
-        default=None,
+        required=False,
         help="Path prefix for outputs. If not specified, no output will be generated.",
     ),
 )
@@ -17,15 +17,15 @@ register_arguments(
 # ==============================================================================
 from pathlib import Path
 from dataclasses import dataclass, field
-from .util import own_attrs
+from .util import ownAttributes
 
 
-@own_attrs
+@ownAttributes
 @dataclass(frozen=False)
 class Output:
-    debug: bool
+    debug: bool = False
 
-    prefix: str | None
+    prefix: str | None = None
 
     path_prefix: Path | None = field(init=False)
     file_prefix: str | None = field(init=False)

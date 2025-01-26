@@ -11,10 +11,11 @@ register_arguments(
     )
 )
 
-from . import Simulation, WallFollowing
+from . import Simulation, WallFollowing, OffsetPath
 from math import pi
 from numpy import argmin
 from enum import Enum
+from typing import Iterator
 
 from lib.geometry import Point
 
@@ -32,24 +33,22 @@ class Bug1(Simulation, WallFollowing):
 
     mode: Mode = Mode.MOVE_TO_DST
     wall_loop: list[Point] = []
-    smooth_dp: list[Point] = []
+    loop_back: Iterator[Point]
 
     @property
     def loop_closed(self):
         p1 = self.wall_loop[-1]
-        cnt = int(5 * self.radius / self.step_length)
+        cnt = int(10 * self.radius / self.step_length)
         cnt = max(cnt, 10)
-        for p0 in self.wall_loop[:-cnt][:cnt]:
-            if (p0 - p1).norm < max(self.step_length * 2, self.radius):
-                return True
-        return False
-
-    padding: Point = Point(0, 0, type=int)
-    loop_enter_heading: float = 0.0
+        if len(self.wall_loop) < cnt:
+            return False
+        p0 = self.wall_loop[0]
+        return (p0 - p1).norm < self.step_length * 2
 
     @property
     def padding_offset(self):
-        return self.vis.line_width_meters * 3
+        k = -1 if self.wall_following_direction == "L" else 1
+        return 2 * self.radius * k
 
     def pad_loop(self, dp: Point) -> Point:
         raise NotImplementedError
@@ -63,7 +62,6 @@ class Bug1(Simulation, WallFollowing):
                 r1 = (dst - pos).angle
                 yield self.move(r1)
                 # Hit the wall
-                self.loop_enter_heading = r1
                 self.mode = self.Mode.MOVE_ALONG_WALL
                 self.wall_loop = [pos]
                 # Left turn not viable, try right turn
@@ -74,45 +72,31 @@ class Bug1(Simulation, WallFollowing):
                 if self.loop_closed:
                     distances = [(dst - p).norm for p in self.wall_loop]
                     idx = int(argmin(distances))
-                    self.wall_loop = self.wall_loop[idx:]
-                    if len(self.wall_loop) > 1:
+                    trj = self.wall_loop[-1:idx:-1]
+                    if len(trj) > 1:
                         self.mode = self.Mode.MOVE_TO_CLOSEST_POINT
                         if self.no_overlap:
-                            pts = self.wall_loop + [pos]
-                            sdp = [p1 - p0 for p0, p1 in zip(pts[1:], pts)]
-                            ps, pe = sdp[0], sdp[-1]
-                            sdp = [
-                                (p0 + p1 + p2) / 3
-                                for p0, p1, p2 in zip(sdp, sdp[1:], sdp[2:])
-                            ]
-                            self.smooth_dp = [ps, *sdp, pe]
-                            self.padding = self.move(
-                                self.loop_enter_heading, -self.padding_offset
+                            trj = OffsetPath(
+                                trj,
+                                self.padding_offset,
+                                step_length=self.step_length,
+                                resolution=self.world.res,
                             )
-                            with self.no_check:
-                                yield self.padding
+                        self.loop_back = iter(trj)
                     else:
                         self.mode = self.Mode.MOVE_TO_DST
                     yield None
                 else:
                     self.wall_loop.append(pos)
-                    yield self.move_along_wall
+                    yield self.follow_wall
             case self.Mode.MOVE_TO_CLOSEST_POINT:
                 self.check = False
-                if len(self.wall_loop) == 0:
-                    self.mode = self.Mode.MOVE_TO_DST
-                    self.padding = Point(0, 0, type=int)
-                    self.prev_dp = None
-                    yield None
-                else:
+                try:
                     with self.no_check:
-                        if self.no_overlap:
-                            p1 = self.wall_loop.pop(-1)
-                            dp = self.smooth_dp.pop(-1)
-                            self.padding = self.pad_loop(dp)
-                            yield p1 - pos + self.padding
-                        else:
-                            yield self.wall_loop.pop(-1) - pos
+                        yield next(self.loop_back) - pos
+                except StopIteration:
+                    self.mode = self.Mode.MOVE_TO_DST
+                    yield None
             case _:
                 # Should never reach here
                 raise RuntimeError(f"Invalid mode {self.mode}")

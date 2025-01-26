@@ -16,9 +16,13 @@ vis = Visualization(**args)
 out = Output(**args)
 img_path = out(suffix="png")
 if vis.visualize:
-    s = vis.scale * vis.dpi_scale
+    s = vis.scale
 
-    x, y, w, h = vis.raw_slice or (0, 0, *vis.world.raw_shape[::-1])
+    if vis.raw_slice is not None:
+        x, y, w, h = vis.raw_slice
+    else:
+        x, y = 0, 0
+        w, h = Point(*(Point(vis.world.w, vis.world.h) / vis.world.res), type=int)
 
     def render():
         view = vis.grayscale.astype(np.float32) / 255.0

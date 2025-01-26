@@ -4,13 +4,28 @@
 # ==============================================================================
 import builtins, sys, numpy as np, cv2
 from typing import Generator, Literal, Iterable, Union
-from math import pi, cos, sin, ceil
-from itertools import chain
+from math import pi, ceil
+from itertools import chain, pairwise
 from contextlib import contextmanager, closing
 
 from lib.geometry import Point
-from lib.util import repeat, dup, Retry
+from lib.util import repeat, min_max, dup, Retry
 from lib.arguments import auto_parse
+
+
+class Hypothesis:
+    """
+    Dry-run the proposed point, return the first viable point.
+    """
+
+    def __init__(self, *hypos: Iterable[Point[float]]):
+        self.hypos = hypos
+
+    def __call__(self, p0: Point[float], sim: "Simulation"):
+        for p1 in chain(*self.hypos):
+            p1 = p0 + p1
+            if sim.world.checkLine(p0, p1, sim.radius):
+                return p1
 
 
 class Proposal:
@@ -55,9 +70,7 @@ class Proposal:
             return Eager(v)
 
 
-ProposalType = (
-    Point[float] | Iterable[Point[float]] | Proposal | Iterable[Proposal] | None
-)
+ProposalType = Point[float] | Iterable[Point[float]] | Proposal | Iterable[Proposal]
 
 
 class Eager(Proposal):
@@ -89,10 +102,12 @@ class Lazy(Proposal):
 from lib.simulation import SimulationBase
 
 
-@auto_parse()
-class Simulation(SimulationBase):
+class __Simulation__(SimulationBase):
     heading: float = 0.0
     check: bool = True
+
+    yield_src: bool = True
+    yield_dst: bool = True
 
     @property
     @contextmanager
@@ -111,7 +126,7 @@ class Simulation(SimulationBase):
         r = hdg
         if d is None:
             d = self.step_length
-        return Point(d * cos(r), d * sin(r), type=float)
+        return Point.Angular(r, d)
 
     def turn(
         self,
@@ -129,9 +144,20 @@ class Simulation(SimulationBase):
         n_steps = max(ceil(abs(dr / delta)), 1)
         return map(lambda r: self.move(r0 + r), np.linspace(0, dr, n_steps))
 
+    def wiggle(
+        self,
+        heading: float,
+        delta=pi / 180.0,
+    ):
+        n_steps = max(ceil(abs(pi / delta)), 1)
+        return map(
+            lambda r: Eager([self.move(heading + r), self.move(heading - r)]),
+            np.linspace(0, pi, n_steps),
+        )
+
     def step(
         self, pos: Point[float], dst: Point[float]
-    ) -> Generator[ProposalType, any, any]:
+    ) -> Generator[Hypothesis | ProposalType | None, Point | None, any]:
         """
         Step the simulation forward.
         Implementation needs to yield the next position of the robot.
@@ -155,7 +181,7 @@ class Simulation(SimulationBase):
         completed: bool = False
         finished: bool = False
 
-        def __init__(self, sim: "Simulation"):
+        def __init__(self, sim: "__Simulation__"):
             self.sim = sim
             self.pos = sim.src
             self.completed = sim.isComplete(self.pos, sim.dst)
@@ -164,29 +190,34 @@ class Simulation(SimulationBase):
         def __next__(self):
             if not self.started:
                 self.started = True
-                return self.sim.src
-            elif not self.completed:
+                if self.sim.yield_src:
+                    return self.sim.src
+            if not self.completed:
                 sim = self.sim
                 pos = self.pos
                 p1: Point[float] | None = None
-                with closing(sim.step(pos, sim.dst)) as proposals:
-                    for step in proposals:
+                steps = sim.step(pos, sim.dst)
+                try:
+                    while True:
+                        step = next(steps)
+                        while isinstance(step, Hypothesis):
+                            step = steps.send(step(self.pos, self.sim))
                         if step is None:
                             raise Retry
                         proposal = Proposal.construct(step)
                         p1 = proposal(self.pos, self.sim)
                         if p1 is not None:
                             break
-                    else:
-                        # sim.step() exhausted, no path found
-                        raise RuntimeError(
-                            f"{sim.__class__.__name__}.step() exhausted at {pos}"
-                        )
+                except StopIteration:
+                    # sim.step() exhausted, no path found
+                    raise Simulation.Abort(
+                        f"{sim.__class__.__name__} exhausted at {pos}"
+                    )
                 self.sim.heading = (p1 - pos).angle
                 self.pos = p1
                 self.completed = sim.isComplete(pos, sim.dst)
                 return self.pos
-            elif not self.finished:
+            if not self.finished and self.sim.yield_dst:
                 self.finished = True
                 return self.sim.dst
             else:
@@ -196,7 +227,7 @@ class Simulation(SimulationBase):
         """
         Run the simulation
         """
-        return Simulation.Session(self)
+        return __Simulation__.Session(self)
 
     def visualize(
         self,
@@ -226,11 +257,15 @@ class Simulation(SimulationBase):
             )
         return bg
 
-    @staticmethod
-    def run(sim: "Simulation"):
+    @classmethod
+    def run(cls, sim: "Simulation" = None, /, **kwargs):
         """
         Run the simulation
         """
+        if sim is None:
+            sim = cls(**kwargs)
+        elif len(kwargs) > 0:
+            raise TypeError("Cannot specify both sim and kwargs")
         vis = sim.vis
         name = sim.__class__.__name__
         sim_img = sim.out(name, suffix="png")
@@ -278,9 +313,9 @@ class Simulation(SimulationBase):
             )
 
         if vis.visualize:
-            bg = vis.view
             vis.show(sim.visualize(p0, trj, travel=0.0))
 
+        flag_term = False
         try:
             for p1 in sim:
                 travel += (p1 - p0).norm
@@ -293,15 +328,16 @@ class Simulation(SimulationBase):
                 print(*p0, (p1 - p0).angle, sep=",")
                 p0 = p1
                 if sim.max_travel is not None and travel > sim.max_travel:
-                    raise Simulation.Abort("exceeded max travel distance")
+                    raise __Simulation__.Abort("exceeded max travel distance")
             print(*p1, (p1 - p0).angle, sep=", ")
             print("# src   :", sim.src)
             print("# dst   :", sim.dst)
             print("# travel:", f"{travel:.2f}")
         except KeyboardInterrupt:
+            flag_term = True
             failure()
             print("# abort : user aborted")
-        except Simulation.Abort as e:
+        except __Simulation__.Abort as e:
             failure()
             print("# abort :", e.reason)
         except Exception as e:
@@ -327,23 +363,35 @@ class Simulation(SimulationBase):
             vis.saveImg(overlay_img, img)
         if vis.visualize and not vis.no_wait:
             try:
+                vis.show(sim.visualize(None, trj, travel=travel))
                 for key in repeat(cv2.waitKey, 10):
                     if key > 0:
                         break
             except KeyboardInterrupt:
+                flag_term = True
                 pass
             cv2.destroyAllWindows()
+
+        return not flag_term
+
+
+@auto_parse()
+class Simulation(__Simulation__):
+    """
+    Exported for convenience of use by specific implementations.
+    No explicit argument parsing is needed.
+    """
 
 
 class WallFollowing:
     wall_following_direction: Literal["L", "R"] | None = None
 
     def __init__(self):
-        if not isinstance(self, Simulation):
+        if not isinstance(self, __Simulation__):
             raise TypeError(f"{self} does not implement Simulation")
 
     @property
-    def hit_wall(self: Union[Simulation, "WallFollowing"]) -> ProposalType:
+    def hit_wall(self: Union[__Simulation__, "WallFollowing"]) -> ProposalType:
         match self.wall_following_direction:
             case "L":
                 return Eager(self.turn("left"))
@@ -354,22 +402,190 @@ class WallFollowing:
         )
 
     @property
-    def move_along_wall(self: Union[Simulation, "WallFollowing"]) -> ProposalType:
+    def follow_wall_left(self: Union[__Simulation__, "WallFollowing"]):
+        return (
+            # First try to turn clockwise
+            Lazy(self.turn("right")),
+            # Right turn not viable, try left turn
+            Eager(self.turn("left")),
+        )
+
+    @property
+    def follow_wall_right(self: Union[__Simulation__, "WallFollowing"]):
+        return (
+            # First try to turn counter-clockwise
+            Lazy(self.turn("left")),
+            # Left turn not viable, try right turn
+            Eager(self.turn("right")),
+        )
+
+    @property
+    def follow_wall(self: Union[__Simulation__, "WallFollowing"]) -> ProposalType:
         match self.wall_following_direction:
             case "L":
-                return (
-                    # First try to turn clockwise
-                    Lazy(self.turn("right")),
-                    # Right turn not viable, try left turn
-                    Eager(self.turn("left")),
-                )
+                return self.follow_wall_left
             case "R":
-                return (
-                    # First try to turn counter-clockwise
-                    Lazy(self.turn("left")),
-                    # Left turn not viable, try right turn
-                    Eager(self.turn("right")),
-                )
+                return self.follow_wall_right
         raise RuntimeError(
             f"Bad wall following direction {self.wall_following_direction}"
         )
+
+
+from lib.world import World
+
+
+class OffsetPath(Simulation, WallFollowing):
+    yield_src = False
+    yield_dst = False
+
+    prev: Point[float] | None = None
+    travel: float = 0.0
+
+    nearest_idx: int = 0
+
+    def step(self, pos: Point[float], dst):
+        nearest: float | None = None
+        for i, (p, _, _, t) in self.scope(self.nearest_idx):
+            d = (pos - p).norm
+            if nearest is None:
+                nearest = d
+            elif d < nearest:
+                nearest = d
+                self.nearest_idx = i
+
+        self.travel = self.vec[self.nearest_idx][3]
+
+        self.prev = pos
+        if self.look_back is not None or self.look_ahead is not None:
+            self.world.img = self.render(
+                pos,
+                look_back=self.look_back,
+                look_ahead=self.look_ahead,
+                img=self.full_img,
+            )
+        yield self.follow_wall
+
+    def scope(self, a: int = 0):
+        for b, (_, _, _, t) in enumerate(self.vec[a:], a):
+            if self.look_back is not None and t < self.travel - self.look_back:
+                a = b + 1
+            if self.look_ahead is not None and t > self.travel + self.look_ahead:
+                break
+        return enumerate(self.vec[a:b], a)
+
+    def isComplete(self, pos, dst):
+        if (
+            self.look_ahead is not None
+            and self.travel + self.look_ahead < self.trj_length
+        ):
+            return False
+        return super().isComplete(pos, dst)
+
+    def __init__(
+        self,
+        trj: Iterable[Point[float]],
+        offset: float,
+        *,
+        resolution: float | None = None,
+        step_length: float | None = None,
+        look_back: float | None = None,
+        look_ahead: float | None = None,
+        **arguments,
+    ):
+        """
+        Follow a path with an offset. Positive offset means to the left of the path.
+        """
+        self.look_back = look_back
+        self.look_ahead = look_ahead
+        # Cache vectors
+        items = ((a, b, b - a) for a, b in pairwise(trj))
+        t = 0.0
+
+        def acc(dt: float):
+            nonlocal t
+            t += dt
+            return t
+
+        vec = self.vec = [(p0, p1, v, acc(v.norm)) for p0, p1, v in items if v.norm > 0]
+        if len(vec) < 1:
+            raise ValueError("Less than 2 points in the trajectory")
+        # Derive wall following direction
+        if offset > 0:
+            self.wall_following_direction = "L"
+        elif offset < 0:
+            self.wall_following_direction = "R"
+        else:
+            raise ValueError("Offset cannot be zero")
+        radius = abs(offset) / 2.0
+        # Calculate bounding box
+        x0, x1 = min_max(p.x for p in trj)
+        y0, y1 = min_max(p.y for p in trj)
+        # Auto determine step-length, if not specified
+        if step_length is None:
+            step_length = max(min(v[2].norm for v in vec), 0.05)
+        # Auto-determine resolution, if not specified
+        if resolution is None:
+            resolution = min(radius, step_length) / 2
+        # Create occupancy map
+        pad = abs(offset) * 4.0
+        w, h = x1 - x0 + 2 * pad, y1 - y0 + 2 * pad
+        blank = (
+            np.ones((ceil(h / resolution), ceil(w / resolution)), dtype=np.uint8) * 255
+        )
+        # Compute start and end points
+        k = 1 if self.wall_following_direction == "L" else -1
+        p, _, v, l = vec[0]
+        src = p + Point.Angular(v.angle + 0.5 * k * pi, 1.2 * abs(offset))
+        self.heading = v.angle
+        _, p, v, l = vec[-1]
+        dst = p
+        self.trj_length = l
+        # Create world
+        arguments = (
+            dict(
+                src=src,
+                dst=dst,
+                radius=radius,
+                step_length=step_length,
+                threshold=2 * step_length + abs(offset),
+                res=resolution,
+                visualize=True,
+                no_wait=True,
+            )
+            | arguments
+        )
+        arguments["meta"] = arguments
+        world = World(initialized=True, **arguments)
+        arguments["world"] = world
+        world.initialize(blank, origin=Point(x0 - pad, y0 - pad))
+        # Construct Simulation
+        __Simulation__.__init__(self, **arguments)
+        WallFollowing.__init__(self)
+        # Precompute full occupancy map
+        self.full_img = self.render()
+        self.full_img[self.full_img < 128] = 128
+
+    def render(
+        self,
+        pos: Point[float] | None = None,
+        look_back: float | None = None,
+        look_ahead: float | None = None,
+        img: np.ndarray | None = None,
+    ):
+        occupancy = np.zeros_like(self.world.occupancy)
+        for p0, p1, v, t in self.vec:
+            if look_back is not None and t < self.travel - look_back:
+                continue
+            if look_ahead is not None and t > self.travel + look_ahead:
+                break
+            mask = self.world.trajectory(p0, p1, self.radius)
+            occupancy |= mask
+        if pos is not None:
+            occupancy[self.world.trajectory(pos, pos, self.radius)] = False
+        self.world.occupancy = occupancy
+        if img is not None:
+            img = img.copy()
+            img[occupancy] = 0
+        else:
+            img = ((1 - occupancy) * 255).astype(np.uint8)
+        return img

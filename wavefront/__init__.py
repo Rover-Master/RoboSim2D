@@ -2,42 +2,51 @@
 # Author: Yuxuan Zhang (robotics@z-yx.cc)
 # License: MIT
 # ==============================================================================
+from lib.arguments import register_arguments, Argument
+
+register_arguments(
+    vanish_threshold=Argument(
+        type=float,
+        required=False,
+        help="Termination condition for wavefront simulation.",
+    )
+)
+
 import builtins, numpy as np, cv2
 from lib.geometry import Point
-from math import ceil
-from lib.util import dup, sliceOffsets
+from lib.util import dup, RollingAverage
 from lib.simulation import SimulationBase
 from lib.arguments import auto_parse
 
 
+def steeper(y: np.ndarray, lv: int = 1):
+    for _ in range(lv):
+        y = 0.5 * np.sin((y - 0.5) * np.pi) + 0.5
+        y = np.clip(y, 0, 1)
+
+    return y
+
+
 @auto_parse()
 class WaveFront(SimulationBase):
-    dtype = np.float32
+    dtype = np.float64
     # Termination threshold - the remaining probability
-    vanish_threshold: float = 0.0001
+    vanish_threshold: float = 0.01  # 1%
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.step_length = self.world.res / 10.0
-        # background
-        o = self.world.occupancy
-        r = ceil(self.radius / self.world.res)
-        # kernel
-        k = np.zeros([2 * r + 1] * 2, dtype=np.uint8)
-        cv2.circle(k, (r, r), r, 255, -1, cv2.FILLED)
-        k[r, r] = 0
-        # prepare for convolution
-        h, w = o.shape
-        m = o.copy()
-        s = slice(-r, r + 1)
-        idx = np.mgrid[s, s].swapaxes(0, 2)
-        # convolute
-        for x, y in idx[k > 128]:
-            s0, s1 = sliceOffsets(x, y)
-            m[*s0] |= o[*s1]
+        self.vanish_threshold = self.world.meta.get(
+            "vanish_threshold", self.vanish_threshold
+        )
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.micro_step = min(self.world.res / 4, self.step_length)
+        occupancy = self.world.padMap(self.radius)
+        h, w = occupancy.shape
         # The base field, 1.0 for free space, 0.0 for obstacles
         # `field * base` filters out probability distributions in obstacles
-        self.base = 1.0 - m.astype(self.dtype)
+        self.base = 1.0 - occupancy.astype(self.dtype)
         # Discrete cartesian coordinates (per-cell)
         Y, X = np.mgrid[:h, :w].astype(self.dtype) * self.world.res
         ox, oy = self.world.world_pos(Point(0, 0))
@@ -46,15 +55,17 @@ class WaveFront(SimulationBase):
         # source_field:
         #   A gaussian distribution around the source.
         #   It's sigma equals the radius of the robot.
-        self.source_field = self.norm(self.gaussian(self.src, self.radius / 2))
+        self.source_field = self.norm(self.gaussian(self.src, self.radius))
         # drain_field:
-        #   An inverse gaussian distribution around the destination
-        #   It's sigma equals the threshold distance.
-        self.drain_field = self.gaussian(self.dst, self.threshold / 2)
+        #   A circle mask centered at the destination.
+        #   It's radius equals the threshold distance.
+        x1, y1, r = self.X - self.dst.x, self.Y - self.dst.y, self.threshold
+        r += self.world.res / 2
+        self.drain_mask = np.array(x1**2 + y1**2 <= r**2, bool)
+        self.drain_field = np.array(self.drain_mask, self.dtype)
 
     @property
     def mask(self):
-        # rendering properties and assets
         r = self.vis.scale
         return (
             cv2.resize(self.base, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
@@ -89,8 +100,10 @@ class WaveFront(SimulationBase):
         invert=False,
     ) -> np.ndarray:
         # Requires float array of range [0.0, 1.0]
-        if bg.max() > 1.0:
-            raise ValueError("Background must be a float array of range [0.0, 1.0]")
+        if bg.max() > 1.0 or bg.min() < 0.0:
+            raise ValueError(
+                f"Background must be a float array of range [0.0, 1.0], got {[bg.min(), bg.max()]}"
+            )
         s = self.vis.scale
         if invert:
             field = 1.0 - field
@@ -99,7 +112,7 @@ class WaveFront(SimulationBase):
         field = np.stack([field] * 3, axis=-1)
         f0, f1 = 1.0 - field, field
         fg = np.ones_like(bg) * color
-        return bg * f0 + fg * f1
+        return np.clip(bg * f0 + fg * f1, 0, 1)
 
     def heatmap(
         self,
@@ -121,10 +134,10 @@ class WaveFront(SimulationBase):
         return bg * f0 + fg * f1
 
     # GPU Acceleration
-    def tick(self, u0: np.ndarray, p0: float, du: np.ndarray) -> np.ndarray:
+    def tick(self, u0: np.ndarray, du: np.ndarray) -> np.ndarray:
         """
-        input: u0 - the prob. field at time t_{n-1}
-        output: u1 - the prob. field at time t_{n}
+        input: u0 - the prob. field at time t_{n}
+        output: u1 - the prob. field at time t_{n+1}
         """
         raise NotImplementedError
 
@@ -144,30 +157,33 @@ class WaveFront(SimulationBase):
                 raise StopIteration
             if self.started:
                 # Apply next tick
-                u1 = self.wf.tick(self.u0, self.p0, self.du)
+                u1 = self.wf.tick(self.u0, self.du) * self.wf.base
+                print(f"p0: {self.p0:.8f} | p1: {u1.sum():.8f}")
                 # Normalize probability field
-                # (1) Obstacles are not traversable, constrain to 0
-                u1 = np.clip(u1 * self.wf.base, 0.0, 1.0)
-                # (2) Overall probability must equal previous iteration
-                u1 *= self.p0 / u1.sum()
-                # Compute delta
-                du = u1 - self.u0
-                # Apply drain
-                drain: np.ndarray = u1 * self.wf.drain_field
-                dp = float(drain.sum())
+                u1: np.ndarray = np.clip(u1, 0.0, None)
+                # u1 *= self.p0 / u1.sum()
+                # Compute drain probability
+                dp = np.sum(u1[self.wf.drain_mask])
+                u1[self.wf.drain_mask] = 0.0
+                # Compute probability shift
                 p1 = self.p0 - dp
-                u1 -= drain
+                # dp = self.p0 - p1
+                du = u1 - self.u0
+                # Constrain total probability
+                # u1 *= p1 / u1.sum()
+                # print(f"prob. shift = {(1.0 - p1 / u1.sum()) * 100:.4f}%")
                 # Termination conditions
                 if p1 < 0:
                     raise StopIteration
                 if p1 < self.wf.vanish_threshold:
                     self.finished = True
+                # dp = self.p0 - p1
                 # Prepare for next rick
                 self.u0, self.p0, self.du = u1, p1, du
             else:
                 self.started = True
                 dp = 0.0
-            return self.u0, self.p0, dp
+            return self.u0, 1.0 - self.p0, dp
 
     def __iter__(self):
         return WaveFront.Session(self)
@@ -186,59 +202,89 @@ class WaveFront(SimulationBase):
 
         U = np.zeros_like(wf.base)
         P = list[float]()
+        DP = list[float]()
         T = list[float]()
         t = 0.0
-        dt = wf.step_length
+        dt = wf.micro_step
+        t_report = 0.0
+        dp_accumulate = 0.0
 
         if wf.vis.visualize:
             import matplotlib.pyplot as plt
 
-            fig, ax = plt.subplots()
-            (plot,) = ax.plot([], [], "r-", lw=2)
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 8))
+            fig.tight_layout(h_pad=4.0, w_pad=2.0)
+            ax1.set_ylim(0, 1)
+            ax1.set_title("Cumulative Probability")
+            ax1.set_xlabel("Travel Distance (m)")
+            ax2.set_title("Transient Probability")
+            ax2.set_xlabel("Travel Distance (m)")
+            (p_plot,) = ax1.plot([], [], "k-", lw=2)
+            (dp_plot,) = ax2.plot([], [], "r--", lw=2)
 
             last_vis_t = 0.0
-            dp_max = 0.0
             bg = wf.view.astype(wf.dtype) / 255.0
 
-            def visualize(u: np.ndarray, p: float, dp: float):
-                nonlocal plot, dp_max
-                dp_max = max(dp_max, dp)
-                m = wf.render(bg, u / u.max(), color=[0.0, 0.0, 1.0])
+            roll: RollingAverage | None = None
+
+            def visualize(u: np.ndarray, p: float):
+                nonlocal roll
+                if roll is None:
+                    roll = RollingAverage(0.8, value=u.max())
+                    k = 1 / roll.value
+                else:
+                    k = 1 / roll(u.max())
+                m = wf.render(bg, u * k, color=[0.0, 0.0, 1.0])
                 m = (m * 255.0).astype(np.uint8)
                 wf.vis.draw_src(m, wf.vis.pixel_pos(wf.src))
                 wf.vis.draw_dst(m, wf.vis.pixel_pos(wf.dst))
-                caption = f"Travel {t:.2f}m | Progress {(1.0 - p) * 100.0:.2f}%"
+                caption = f"Travel {t:.2f}m | Progress {p * 100.0:.2f}%"
                 wf.vis.caption(m, caption, fg=(0, 0, 0), bg=(255, 255, 255))
                 wf.vis.show(m)
                 # T-P Plot
-                ax.set_xlim(0, max(t, 1.0))
-                ax.set_ylim(0, max(dp_max, 1e-10))
-                plot.remove()
-                (plot,) = ax.plot(T, P, "r-", lw=2)
+                nonlocal p_plot, dp_plot
+                ax1.set_xlim(0, max(t, 10.0))
+                ax2.set_xlim(0, max(t, 10.0))
+                ax2.set_ylim(0, max(max(DP), 1e-10))
+                p_plot.set_data(T, P)
+                dp_plot.set_data(T, DP)
                 fig.show()
 
-        n = 0
-        for n, (u, p, dp) in enumerate(wf):
+        for u, p, dp in wf:
             U += u
-            print(t, p, dp, sep=", ")
-            P.append(dp)
-            T.append(t)
+            if t + dt > t_report:
+                t_report += wf.step_length
+                T.append(t)
+                P.append(p)
+                DP.append(dp_accumulate)
+                if dp_accumulate > 0:
+                    print(f"{t:.2f}, {p:.4f}, {dp_accumulate:.8f}")
+                dp_accumulate = 0.0
+            else:
+                dp_accumulate += dp
             t += dt
             # Visualization
             if wf.vis.visualize and t - last_vis_t > 0.1:
                 last_vis_t = t
-                visualize(u, p, dp)
+                visualize(u, p)
                 if cv2.waitKey(1) > 0:
                     break
+        else:
+            print(f"{t:.2f}, {p:.4f}", dp_accumulate, sep=", ")
         x = np.array(T)
         y = np.array(P)
         print(f"# coverage: {y.sum():.4f}")
-        y /= y.sum()
+        sum_y = np.sum(y)
+        if sum_y > 0:
+            y /= sum_y
         mean = np.sum(x * y)
         print(f"# travel  : {mean:.2f}")
         variance = np.sum((x - mean) ** 2 * y)
         std = np.sqrt(variance)
         print(f"# std     : {std:.2f}")
+        print(f"# src     : {wf.src}")
+        print(f"# dst     : {wf.dst}")
+        print(f"# distance: {(wf.src - wf.dst).norm:.2f}")
         # u = U / float(n + 1)
         amp: float = 1.0
         bg = wf.vis.view.astype(wf.dtype) / 255.0
@@ -262,7 +308,7 @@ class WaveFront(SimulationBase):
 
         if wf.vis.visualize and not wf.vis.no_wait:
             if t != last_vis_t:
-                visualize(u, p, dp)
+                visualize(u, p)
                 handle = renderVis()
                 cv2.createTrackbar(
                     "AMP", handle, int(amp * 10), 100, lambda v: renderVis(v / 10.0)

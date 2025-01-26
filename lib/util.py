@@ -13,7 +13,7 @@ from inspect import signature
 T = TypeVar("T")
 
 
-def own_attrs(cls: T) -> T:
+def ownAttributes(cls: T) -> T:
     slots = signature(cls).parameters
     init = cls.__init__
 
@@ -94,6 +94,70 @@ def readline(stream: Iterable[bytes]) -> str:
     return line.decode("utf-8")
 
 
+def sliding_window(iterable: Iterable[T], n: int):
+    if n <= 0:
+        raise ValueError("n must be a positive integer")
+    if n == 1:
+        return zip(iterable)
+    if n == 2:
+        from itertools import pairwise
+
+        return pairwise(iterable)
+    from itertools import tee, islice
+
+    iterators = tee(iterable, n)
+    for i, iterator in enumerate(iterators):
+        next(islice(iterator, i, i), None)
+    return zip(*iterators)
+
+
+def min_max(it):
+    a = b = None
+    for x in it:
+        if a is None or x < a:
+            a = x
+        if b is None or x > b:
+            b = x
+    return a, b
+
+
+class pad(Generic[T]):
+    def __init__(self, el: Iterable[T], /, start: int = 0, end: int = 0):
+        self.el = el
+        self.pad_start = start
+        self.pad_end = end
+
+    item: T
+    repeat: int = 0
+
+    def __iter__(self):
+        self.it = iter(self.el)
+        self.started = False
+        self.ended = False
+        self.repeat = 0
+        return self
+
+    def __next__(self):
+        if self.repeat > 0:
+            self.repeat -= 1
+            return self.item
+        if self.ended:
+            raise StopIteration
+        try:
+            self.item = next(self.it)
+            if not self.started and self.pad_start:
+                self.started = True
+                self.repeat = self.pad_start
+            return self.item
+        except StopIteration:
+            self.ended = True
+            if not hasattr(self, "item"):
+                raise StopIteration
+            else:
+                self.repeat = self.pad_end - 1
+                return self.item
+
+
 def dup(dst, src=None):
     from sys import stdout
 
@@ -159,3 +223,13 @@ class Retry(Exception):
                     pass
 
         return wraps(func)(wrapper)
+
+
+class RollingAverage:
+    def __init__(self, decay: float = 0.5, *, value: float = 0.0):
+        self.decay = decay
+        self.value = value
+
+    def __call__(self, value: float) -> float:
+        self.value = self.decay * self.value + (1 - self.decay) * value
+        return self.value

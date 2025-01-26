@@ -6,3 +6,5 @@ results
 *.log
 *.tex
 .vscode
+
+*.local.*
