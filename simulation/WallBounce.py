@@ -6,10 +6,11 @@ from lib.arguments import register_arguments, Argument
 
 register_arguments(
     heading=Argument(
-        type=float, required=False, help="Initial heading of the agent in radians."
+        type=float, required=False, help="Initial heading of the agent in degrees."
     )
 )
 
+from math import radians
 from . import Simulation, Hypothesis
 from lib.geometry import Point
 
@@ -18,7 +19,7 @@ class WallBounce(Simulation):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.heading: float = self.world.meta.get("heading", 0.0)
+        self.heading: float = radians(self.world.meta.get("heading", 0.0))
 
     def step(self, pos: Point[float], dst):
         go_ahead = self.move(self.heading)

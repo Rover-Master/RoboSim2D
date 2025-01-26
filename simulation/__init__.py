@@ -332,7 +332,7 @@ class __Simulation__(SimulationBase):
             print(*p1, (p1 - p0).angle, sep=", ")
             print("# src   :", sim.src)
             print("# dst   :", sim.dst)
-            print("# travel:", f"{travel:.2f}")
+            print("# travel:", travel)
         except KeyboardInterrupt:
             flag_term = True
             failure()

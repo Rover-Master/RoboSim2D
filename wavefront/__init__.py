@@ -133,7 +133,6 @@ class WaveFront(SimulationBase):
         fg = np.ones_like(field) * c0
         return bg * f0 + fg * f1
 
-    # GPU Acceleration
     def tick(self, u0: np.ndarray, du: np.ndarray) -> np.ndarray:
         """
         input: u0 - the prob. field at time t_{n}
@@ -158,7 +157,6 @@ class WaveFront(SimulationBase):
             if self.started:
                 # Apply next tick
                 u1 = self.wf.tick(self.u0, self.du) * self.wf.base
-                print(f"p0: {self.p0:.8f} | p1: {u1.sum():.8f}")
                 # Normalize probability field
                 u1: np.ndarray = np.clip(u1, 0.0, None)
                 # u1 *= self.p0 / u1.sum()
@@ -251,18 +249,20 @@ class WaveFront(SimulationBase):
                 fig.show()
 
         for u, p, dp in wf:
+            t1 = t + dt
+            if wf.max_travel is not None and t1 > wf.max_travel:
+                break
             U += u
-            if t + dt > t_report:
-                t_report += wf.step_length
+            if t1 >= t_report:
                 T.append(t)
                 P.append(p)
                 DP.append(dp_accumulate)
-                if dp_accumulate > 0:
-                    print(f"{t:.2f}, {p:.4f}, {dp_accumulate:.8f}")
+                print(f"{t1:.2f}, {p:.4f}, {dp_accumulate:.8f}", flush=True)
                 dp_accumulate = 0.0
+                t_report += wf.step_length
             else:
                 dp_accumulate += dp
-            t += dt
+            t = t1
             # Visualization
             if wf.vis.visualize and t - last_vis_t > 0.1:
                 last_vis_t = t
@@ -272,12 +272,10 @@ class WaveFront(SimulationBase):
         else:
             print(f"{t:.2f}, {p:.4f}", dp_accumulate, sep=", ")
         x = np.array(T)
-        y = np.array(P)
-        print(f"# coverage: {y.sum():.4f}")
-        sum_y = np.sum(y)
-        if sum_y > 0:
-            y /= sum_y
-        mean = np.sum(x * y)
+        y = np.array(DP)
+        c = np.sum(y)
+        print(f"# coverage: {c:.4f}")
+        mean = np.sum(x * y) / c
         print(f"# travel  : {mean:.2f}")
         variance = np.sum((x - mean) ** 2 * y)
         std = np.sqrt(variance)
