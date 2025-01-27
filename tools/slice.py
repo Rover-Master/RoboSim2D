@@ -66,7 +66,7 @@ if vis.visualize:
         vis.raw_slice = (x, y, w, h)
         render()
 
-    handle = render()
+    handle, _, _ = render()
     cv2.setMouseCallback(handle, onMouse)
     while cv2.waitKey(1) < 0:
         pass

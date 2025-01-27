@@ -10,6 +10,12 @@ register_arguments(
         required=False,
         help="Path prefix for outputs. If not specified, no output will be generated.",
     ),
+    overwrite=Argument(
+        "-f",
+        opt_name="force",
+        action="store_true",
+        help="Overwrite existing files",
+    ),
 )
 
 # ==============================================================================
@@ -26,6 +32,7 @@ class Output:
     debug: bool = False
 
     prefix: str | None = None
+    overwrite: bool = False
 
     path_prefix: Path | None = field(init=False)
     file_prefix: str | None = field(init=False)
@@ -47,7 +54,9 @@ class Output:
             elif self.path_prefix.is_file():
                 raise FileExistsError(f"Prefix {self.path_prefix} is a file")
 
-    def __call__(self, stem: str | None = None, suffix: str | None = None):
+    def __call__(
+        self, stem: str | None = None, suffix: str | None = None
+    ) -> Path | None:
         if self.path_prefix is None or self.file_prefix is None:
             return None
         if self.file_prefix and stem:
@@ -60,4 +69,10 @@ class Output:
             if suffix.startswith("."):
                 raise ValueError("suffix should not start with '.'")
             name = f"{name}.{suffix}"
-        return self.path_prefix / name
+        path = self.path_prefix / name
+        if path.exists():
+            if self.overwrite:
+                path.unlink() if path.is_file() else path.rmdir()
+            else:
+                raise FileExistsError(path)
+        return path

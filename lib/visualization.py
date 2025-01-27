@@ -148,8 +148,8 @@ class Visualization:
     def line(
         self,
         img: np.ndarray,
-        src: Point[float],
-        dst: Point[float],
+        src: Point[int],
+        dst: Point[int],
         color: tuple[int, int, int] | int = 255,
     ):
         cv2.line(img, src, dst, color, self.line_width, cv2.LINE_AA)
@@ -206,7 +206,9 @@ class Visualization:
     def handle(self):
         return self.world.name
 
-    def show(self, img: np.ndarray, desc: str | None = None, scale=None):
+    def show(
+        self, img: np.ndarray, desc: str | None = None, scale=None, wait_key: int = 1
+    ) -> tuple[str, np.ndarray, int]:
         if scale is not None:
             s = 1 / scale
             img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
@@ -217,8 +219,12 @@ class Visualization:
             title = self.handle
         else:
             title = f"{self.handle} ({desc})"
-        cv2.imshow(title, img)
-        return title
+        if self.visualize:
+            cv2.imshow(title, img)
+            key = cv2.waitKey(wait_key)
+        else:
+            key = -1
+        return title, img, key
 
     @property
     def grayscale(self) -> np.ndarray:

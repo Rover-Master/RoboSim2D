@@ -10,6 +10,7 @@ from contextlib import contextmanager, closing
 
 from lib.geometry import Point
 from lib.util import repeat, min_max, dup, Retry
+from lib.video import Video
 from lib.arguments import auto_parse
 
 
@@ -235,6 +236,7 @@ class __Simulation__(SimulationBase):
         fg: np.ndarray,
         bg: np.ndarray | None = None,
         travel: float | None = None,
+        failed: bool = False,
     ):
         name = self.__class__.__name__
         vis = self.vis
@@ -251,7 +253,11 @@ class __Simulation__(SimulationBase):
                 (192, 0, 0),
                 cv2.FILLED,
             )
-        if travel is not None:
+        if failed:
+            vis.caption(
+                bg, f"[ FAILED ]   ({name})", fg=(0, 0, 192), bg=(255, 255, 255)
+            )
+        elif travel is not None:
             vis.caption(
                 bg, f"Travel: {travel:.2f} m ({name})", fg=(0, 0, 0), bg=(255, 255, 255)
             )
@@ -272,17 +278,28 @@ class __Simulation__(SimulationBase):
         trj_list = sim.out(name, suffix="txt")
         trj_img = sim.out(f"{name}-trj", suffix="png")
         overlay_img = sim.out(f"{name}-overlay", suffix="png")
+        recording = sim.out(name, suffix="mp4")
+
         if trj_list is not None:
             trj_list_file = open(trj_list, "w")
             print = dup(trj_list_file)
         else:
             print = builtins.print
 
+        if sim.record:
+            if recording is None:
+                raise ValueError("Recording is enabled but prefix is not specified")
+            else:
+                video = Video(recording)
+        else:
+            video = None
+
         travel: float = 0.0
         p0 = sim.src
         p1 = sim.src
 
         trj = np.zeros(vis.grayscale.shape, dtype=np.uint8)
+        flag_success = False
 
         def line(a: Point[float], b: Point[float]):
             cv2.line(
@@ -295,13 +312,14 @@ class __Simulation__(SimulationBase):
             )
 
         def failure():
+            nonlocal p1
             cv2.drawMarker(
                 trj,
                 vis.pixel_pos(p1),
                 0,
                 cv2.MARKER_TILTED_CROSS,
-                vis.px(0.3),
-                vis.line_width * 3,
+                vis.px(0.32),
+                vis.line_width * 4,
             )
             cv2.drawMarker(
                 trj,
@@ -311,18 +329,22 @@ class __Simulation__(SimulationBase):
                 vis.px(0.3),
                 vis.line_width,
             )
+            p1 = None
 
-        if vis.visualize:
-            vis.show(sim.visualize(p0, trj, travel=0.0))
+        if vis.visualize or video is not None:
+            _, frame, key = vis.show(sim.visualize(p0, trj, travel=0.0))
+            if video is not None:
+                video.write(frame)
 
         flag_term = False
         try:
             for p1 in sim:
                 travel += (p1 - p0).norm
                 line(p0, p1)
-                if vis.visualize:
-                    vis.show(sim.visualize(p1, trj, travel=travel))
-                    key = cv2.waitKey(1)
+                if vis.visualize or sim.record:
+                    _, frame, key = vis.show(sim.visualize(p1, trj, travel=travel))
+                    if video is not None:
+                        video.write(frame)
                     if key == 27 or key == ord("q"):  # ESC or 'q'
                         break
                 print(*p0, (p1 - p0).angle, sep=",")
@@ -333,6 +355,7 @@ class __Simulation__(SimulationBase):
             print("# src   :", sim.src)
             print("# dst   :", sim.dst)
             print("# travel:", travel)
+            flag_success = True
         except KeyboardInterrupt:
             flag_term = True
             failure()
@@ -356,14 +379,23 @@ class __Simulation__(SimulationBase):
         if overlay_img is not None:
             blank = np.zeros_like(trj)
             overlay = sim.visualize(
-                None, blank, np.stack([blank] * 3, axis=-1), travel=travel
+                None,
+                blank,
+                np.stack([blank] * 3, axis=-1),
+                travel=travel,
+                failed=not flag_success,
             )
             alpha = (np.max(overlay, axis=-1, keepdims=True) > 0).astype(np.uint8) * 255
             img = np.concatenate([overlay, alpha], axis=-1)
             vis.saveImg(overlay_img, img)
+        if vis.visualize or video is not None:
+            _, frame, _ = vis.show(
+                sim.visualize(p1, trj, travel=travel, failed=not flag_success)
+            )
+            if video is not None:
+                video.write(frame)
         if vis.visualize and not vis.no_wait:
             try:
-                vis.show(sim.visualize(None, trj, travel=travel))
                 for key in repeat(cv2.waitKey, 10):
                     if key > 0:
                         break
@@ -371,7 +403,8 @@ class __Simulation__(SimulationBase):
                 flag_term = True
                 pass
             cv2.destroyAllWindows()
-
+        if video is not None:
+            video.release()
         return not flag_term
 
 

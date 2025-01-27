@@ -17,6 +17,7 @@ from lib.geometry import Point
 from lib.util import dup, RollingAverage
 from lib.simulation import SimulationBase
 from lib.arguments import auto_parse
+from lib.video import Video
 
 
 def steeper(y: np.ndarray, lv: int = 1):
@@ -192,11 +193,24 @@ class WaveFront(SimulationBase):
         out_list = wf.out(name, suffix="txt")
         out_img = wf.out(name, suffix="png")
         out_fig = wf.out(name, suffix="pdf")
+        recording_wave = wf.out(name, suffix="mp4")
+        recording_fig = wf.out(name + "-figure", suffix="mp4")
+
         if out_list is not None:
             trj_list_file = open(out_list, "w")
             print = dup(trj_list_file)
         else:
             print = builtins.print
+
+        if wf.record:
+            if recording_wave is None or recording_fig is None:
+                raise ValueError("Recording is enabled but prefix is not specified")
+            else:
+                video_wave = Video(recording_wave)
+                video_fig = Video(recording_fig)
+        else:
+            video_wave = None
+            video_fig = None
 
         U = np.zeros_like(wf.base)
         P = list[float]()
@@ -207,15 +221,18 @@ class WaveFront(SimulationBase):
         t_report = 0.0
         dp_accumulate = 0.0
 
-        if wf.vis.visualize:
+        if wf.vis.visualize or wf.record:
             import matplotlib.pyplot as plt
 
+            # from matplotlib import rc
+            # rc("font", family="serif", serif="Times", size=12)
+
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 8))
-            fig.tight_layout(h_pad=4.0, w_pad=2.0)
+            fig.tight_layout(h_pad=4.0, w_pad=3.0)
             ax1.set_ylim(0, 1)
-            ax1.set_title("Cumulative Probability")
+            # ax1.set_title("Cumulative Probability")
             ax1.set_xlabel("Travel Distance (m)")
-            ax2.set_title("Transient Probability")
+            # ax2.set_title("Transient Probability")
             ax2.set_xlabel("Travel Distance (m)")
             (p_plot,) = ax1.plot([], [], "k-", lw=2)
             (dp_plot,) = ax2.plot([], [], "r--", lw=2)
@@ -225,7 +242,7 @@ class WaveFront(SimulationBase):
 
             roll: RollingAverage | None = None
 
-            def visualize(u: np.ndarray, p: float):
+            def render(u: np.ndarray, p: float):
                 nonlocal roll
                 if roll is None:
                     roll = RollingAverage(0.8, value=u.max())
@@ -238,7 +255,9 @@ class WaveFront(SimulationBase):
                 wf.vis.draw_dst(m, wf.vis.pixel_pos(wf.dst))
                 caption = f"Travel {t:.2f}m | Progress {p * 100.0:.2f}%"
                 wf.vis.caption(m, caption, fg=(0, 0, 0), bg=(255, 255, 255))
-                wf.vis.show(m)
+                _, frame, key = wf.vis.show(m)
+                if video_wave is not None:
+                    video_wave.write(frame)
                 # T-P Plot
                 nonlocal p_plot, dp_plot
                 ax1.set_xlim(0, max(t, 10.0))
@@ -246,7 +265,11 @@ class WaveFront(SimulationBase):
                 ax2.set_ylim(0, max(max(DP), 1e-10))
                 p_plot.set_data(T, P)
                 dp_plot.set_data(T, DP)
-                fig.show()
+                if wf.vis.visualize:
+                    fig.show()
+                if wf.record:
+                    video_fig.writeFig(fig)
+                return key
 
         for u, p, dp in wf:
             t1 = t + dt
@@ -260,15 +283,15 @@ class WaveFront(SimulationBase):
                 print(f"{t1:.2f}, {p:.4f}, {dp_accumulate:.8f}", flush=True)
                 dp_accumulate = 0.0
                 t_report += wf.step_length
+                # Visualization
+                if wf.vis.visualize or wf.record:
+                    last_vis_t = t
+                    key = render(u, p)
+                    if key >= 0:
+                        break
             else:
                 dp_accumulate += dp
             t = t1
-            # Visualization
-            if wf.vis.visualize and t - last_vis_t > 0.1:
-                last_vis_t = t
-                visualize(u, p)
-                if cv2.waitKey(1) > 0:
-                    break
         else:
             print(f"{t:.2f}, {p:.4f}", dp_accumulate, sep=", ")
         x = np.array(T)
@@ -306,7 +329,7 @@ class WaveFront(SimulationBase):
 
         if wf.vis.visualize and not wf.vis.no_wait:
             if t != last_vis_t:
-                visualize(u, p)
+                render(u, p)
                 handle = renderVis()
                 cv2.createTrackbar(
                     "AMP", handle, int(amp * 10), 100, lambda v: renderVis(v / 10.0)

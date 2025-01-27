@@ -23,9 +23,12 @@ class RandomWalk(Simulation):
         self.heading = self.random() * 2 * pi
 
     def step(self, pos, dst):
+        go_ahead = self.move(self.heading)
         yield [
             # Try to keep previous heading
-            self.move(self.heading),
+            go_ahead,
+            go_ahead / 2.0,
+            go_ahead / 4.0,
             # Original heading no longer viable,
             # try new random headings until a viable one is found
             map(lambda r: self.move(r * 2 * pi), repeat(self.random)),

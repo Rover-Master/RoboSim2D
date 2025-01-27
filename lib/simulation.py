@@ -41,6 +41,10 @@ register_arguments(
         help="Offset both the src and dst coordinates, "
         "with +y being the unit vector pointing from src to dst",
     ),
+    record=Argument(
+        action="store_true",
+        help="Record simulation output to a video file",
+    ),
 )
 
 # ==============================================================================
@@ -69,6 +73,7 @@ class SimulationBase:
     max_travel: float | None = None
     step_length: float | None = None
     task_offset: Point[float] | None = None
+    record: bool = False
 
     out: Output = field(init=False)
     vis: Visualization = field(init=False)

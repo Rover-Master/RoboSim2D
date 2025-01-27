@@ -80,17 +80,9 @@ class Bug2(Simulation, WallFollowing):
                 raise RuntimeError(f"Invalid mode {self.mode}")
 
     def visualize(self, pos, fg, bg=None, **kwargs):
-        import cv2
-
-        world = self.world
         if bg is None:
             bg = self.vis.view
-        cv2.line(
-            bg,
-            world.pixel_pos(self.src),
-            world.pixel_pos(self.dst),
-            (128, 128, 128),
-            self.vis.line_width,
-            cv2.LINE_AA,
-        )
+        src = self.vis.pixel_pos(self.src)
+        dst = self.vis.pixel_pos(self.dst)
+        self.vis.line(bg, src, dst, (128, 128, 128))
         return super().visualize(pos, fg, bg, **kwargs)

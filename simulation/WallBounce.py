@@ -28,6 +28,7 @@ class WallBounce(Simulation):
             go_ahead,
             # Micro step to ensure robot is against the wall
             go_ahead / 2.0,
+            go_ahead / 4.0,
         ]
         # Find tangent vectors on both sides
         l: Point | None = yield Hypothesis(self.turn("left"))
