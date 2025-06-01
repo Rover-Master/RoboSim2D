@@ -16,7 +16,6 @@ def start(*args):
 def BGR2YUV(BGR: np.ndarray[tuple[int, int, int]]):
     GRAY = (BGR[:, :, 0] == BGR[:, :, 1]) & (BGR[:, :, 1] == BGR[:, :, 2])
     gray = BGR[GRAY, 0]
-    gray[gray == 192] = 183
     BGR = BGR.astype(np.float64)
     B, G, R = BGR[:, :, 0], BGR[:, :, 1], BGR[:, :, 2]
     Y = 0.299 * R + 0.587 * G + 0.114 * B
