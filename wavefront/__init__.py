@@ -14,7 +14,7 @@ register_arguments(
 
 import builtins, numpy as np, cv2
 from lib.geometry import Point
-from lib.util import dup, RollingAverage
+from lib.util import dup, RollingAverage, fig2img
 from lib.simulation import SimulationBase
 from lib.arguments import auto_parse
 from lib.video import Video
@@ -56,7 +56,7 @@ class WaveFront(SimulationBase):
         # source_field:
         #   A gaussian distribution around the source.
         #   It's sigma equals the radius of the robot.
-        self.source_field = self.norm(self.gaussian(self.src, self.radius))
+        self.source_field = self.norm(self.gaussian(self.src, self.radius / 2))
         # drain_field:
         #   A circle mask centered at the destination.
         #   It's radius equals the threshold distance.
@@ -194,7 +194,8 @@ class WaveFront(SimulationBase):
         out_img = wf.out(name, suffix="png")
         out_fig = wf.out(name, suffix="pdf")
         recording_wave = wf.out(name, suffix="mp4")
-        recording_fig = wf.out(name + "-figure", suffix="mp4")
+        recording_cumulative = wf.out(name + "-cumulative", suffix="mp4")
+        recording_transient = wf.out(name + "-transient", suffix="mp4")
 
         if out_list is not None:
             trj_list_file = open(out_list, "w")
@@ -203,18 +204,21 @@ class WaveFront(SimulationBase):
             print = builtins.print
 
         if wf.record:
-            if recording_wave is None or recording_fig is None:
+            if None in (recording_wave, recording_cumulative, recording_transient):
                 raise ValueError("Recording is enabled but prefix is not specified")
             else:
                 video_wave = Video(recording_wave)
-                video_fig = Video(recording_fig)
+                video_cumulative = Video(recording_cumulative)
+                video_transient = Video(recording_transient)
         else:
             video_wave = None
-            video_fig = None
+            video_cumulative = None
+            video_transient = None
 
         U = np.zeros_like(wf.base)
         P = list[float]()
         DP = list[float]()
+        VIS_DP = list[float]()
         T = list[float]()
         t = 0.0
         dt = wf.micro_step
@@ -224,20 +228,27 @@ class WaveFront(SimulationBase):
         if wf.vis.visualize or wf.record:
             import matplotlib.pyplot as plt
 
-            # from matplotlib import rc
-            # rc("font", family="serif", serif="Times", size=12)
+            from matplotlib import rc
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 8))
-            fig.tight_layout(h_pad=4.0, w_pad=3.0)
+            rc("font", family="Times New Roman", size=16)
+
+            fig1, ax1 = plt.subplots(figsize=(6, 4))
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            fig1.tight_layout(h_pad=6.0, w_pad=3.0)
+            fig2.tight_layout(h_pad=6.0, w_pad=3.0)
+            bkg = [183 / 255] * 3
+            fig1.patch.set_facecolor(bkg)
+            fig2.patch.set_facecolor(bkg)
+            ax1.set_facecolor(bkg)
+            ax2.set_facecolor(bkg)
             ax1.set_ylim(0, 1)
             # ax1.set_title("Cumulative Probability")
             ax1.set_xlabel("Travel Distance (m)")
             # ax2.set_title("Transient Probability")
             ax2.set_xlabel("Travel Distance (m)")
             (p_plot,) = ax1.plot([], [], "k-", lw=2)
-            (dp_plot,) = ax2.plot([], [], "r--", lw=2)
+            (dp_plot,) = ax2.plot([], [], "k-", lw=2)
 
-            last_vis_t = 0.0
             bg = wf.view.astype(wf.dtype) / 255.0
 
             roll: RollingAverage | None = None
@@ -262,13 +273,19 @@ class WaveFront(SimulationBase):
                 nonlocal p_plot, dp_plot
                 ax1.set_xlim(0, max(t, 10.0))
                 ax2.set_xlim(0, max(t, 10.0))
-                ax2.set_ylim(0, max(max(DP), 1e-10))
+                ax2.set_ylim(0, max(max(VIS_DP), 0.1))
                 p_plot.set_data(T, P)
-                dp_plot.set_data(T, DP)
-                if wf.vis.visualize:
-                    fig.show()
-                if wf.record:
-                    video_fig.writeFig(fig)
+                dp_plot.set_data(T, VIS_DP)
+                dw = min(1.0, len(VIS_DP) * wf.step_length / 200.0)
+                dp_plot.set_linewidth(2.0 - dw)
+                img_cumulative = fig2img(fig1)
+                img_transient = fig2img(fig2)
+                wf.vis.show(img_cumulative, "cumulative", 2.0)
+                wf.vis.show(img_transient, "transient", 2.0)
+                if video_cumulative is not None:
+                    video_cumulative.write(img_cumulative)
+                if video_transient is not None:
+                    video_transient.write(img_transient)
                 return key
 
         for u, p, dp in wf:
@@ -280,12 +297,12 @@ class WaveFront(SimulationBase):
                 T.append(t)
                 P.append(p)
                 DP.append(dp_accumulate)
+                VIS_DP.append(100 * dp_accumulate / wf.step_length)
                 print(f"{t1:.2f}, {p:.4f}, {dp_accumulate:.8f}", flush=True)
                 dp_accumulate = 0.0
                 t_report += wf.step_length
                 # Visualization
                 if wf.vis.visualize or wf.record:
-                    last_vis_t = t
                     key = render(u, p)
                     if key >= 0:
                         break
@@ -328,12 +345,11 @@ class WaveFront(SimulationBase):
             return wf.vis.show(vis(), "probability distribution")
 
         if wf.vis.visualize and not wf.vis.no_wait:
-            if t != last_vis_t:
-                render(u, p)
-                handle = renderVis()
-                cv2.createTrackbar(
-                    "AMP", handle, int(amp * 10), 100, lambda v: renderVis(v / 10.0)
-                )
+            render(u, p)
+            handle = renderVis()
+            cv2.createTrackbar(
+                "AMP", handle, int(amp * 10), 100, lambda v: renderVis(v / 10.0)
+            )
             try:
                 while True:
                     if cv2.waitKey(1) > 0:

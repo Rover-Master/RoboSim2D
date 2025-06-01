@@ -4,6 +4,7 @@ var
 tmp
 results
 recording
+*.pdf
 *.log
 *.tex
 .vscode

@@ -2,12 +2,6 @@ from pathlib import Path
 from subprocess import Popen, PIPE
 import numpy as np
 
-# Typing only
-try:
-    from matplotlib.figure import Figure
-except ImportError:
-    pass
-
 
 def start(*args):
     return Popen(tuple(map(str, args)), stdin=PIPE, stdout=None, stderr=None)
@@ -68,8 +62,8 @@ class Video:
     proc: Popen | None = None
     frame_shape: tuple[int, int] | None = None
 
-    def __init__(self, outfile: Path, fps: int = 30):
-        self.outfile = outfile
+    def __init__(self, outfile: str | Path, fps: int = 30):
+        self.outfile = Path(outfile)
         self.fps = fps
 
     def write(self, img: np.ndarray):
@@ -93,18 +87,6 @@ class Video:
             raise ValueError(f"Unsupported image shape {img.shape}")
         # Write frame
         self.proc.stdin.write(BGR2YUV(img).tobytes())
-
-    def writeFig(self, fig: Figure, **kwargs):
-        from io import BytesIO
-        import cv2
-
-        buffer = BytesIO()
-        kwargs.update(format="png", dpi=300)
-        fig.savefig(buffer, **kwargs)
-        buffer.seek(0)
-        png = np.frombuffer(buffer.getvalue(), np.uint8)
-        img = cv2.imdecode(png, cv2.IMREAD_COLOR)
-        return self.write(img)
 
     def release(self):
         if self.proc is not None:

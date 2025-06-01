@@ -233,3 +233,22 @@ class RollingAverage:
     def __call__(self, value: float) -> float:
         self.value = self.decay * self.value + (1 - self.decay) * value
         return self.value
+
+
+try:
+    from matplotlib.figure import Figure
+except ImportError:
+    pass
+
+
+def fig2img(fig: "Figure", **kwargs):
+    from io import BytesIO
+    import cv2, numpy as np
+
+    buffer = BytesIO()
+    kwargs.update(format="png", dpi=300)
+    fig.savefig(buffer, **kwargs)
+    buffer.seek(0)
+    png = np.frombuffer(buffer.getvalue(), np.uint8)
+    img = cv2.imdecode(png, cv2.IMREAD_COLOR)
+    return img
